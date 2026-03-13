@@ -1,0 +1,16 @@
+Exception ignored in: <function Connection.__del__ at 0x104403ee0>
+Traceback (most recent call last):
+  File "/Users/lipengwei/Downloads/代码/k8sfabu/backend/venv/lib/python3.9/site-packages/aiomysql/connection.py", line 1131, in __del__
+Exception ignored in: <function Connection.__del__ at 0x104403ee0>
+Traceback (most recent call last):
+  File "/Users/lipengwei/Downloads/代码/k8sfabu/backend/venv/lib/python3.9/site-packages/aiomysql/connection.py", line 1131, in __del__
+  File "/Users/lipengwei/Downloads/代码/k8sfabu/backend/venv/lib/python3.9/site-packages/aiomysql/connection.py", line 339, in close
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/selector_events.py", line 700, in close
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 746, in call_soon
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 510, in _check_closed
+RuntimeError: Event loop is closed
+  File "/Users/lipengwei/Downloads/代码/k8sfabu/backend/venv/lib/python3.9/site-packages/aiomysql/connection.py", line 339, in close
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/selector_events.py", line 700, in close
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 746, in call_soon
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py", line 510, in _check_closed
+RuntimeError: Event loop is closed

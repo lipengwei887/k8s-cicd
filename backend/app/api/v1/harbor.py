@@ -5,6 +5,7 @@ Harbor 镜像仓库 API
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 import logging
+import requests
 
 from app.api.v1.auth import get_current_active_user
 from app.models.user import User
@@ -115,16 +116,31 @@ async def get_service_image_tags(
     
     try:
         # 解析镜像地址获取 harbor host
+        logger.info(f"Parsing image URL for service {service_id}: {service.current_image}")
         harbor_host, project, repository = harbor_service.parse_image_url(service.current_image)
         
+        logger.info(f"Parsed result - host: {harbor_host}, project: {project}, repository: {repository}")
+        
         if not harbor_host or not project or not repository:
-            raise HTTPException(status_code=400, detail="Invalid image URL format")
+            raise HTTPException(status_code=400, detail=f"Invalid image URL format: {service.current_image}")
         
         # 构建 harbor URL
         harbor_url = f"https://{harbor_host}"
         
         # 创建 Harbor 服务实例，传入从 Secret 获取的认证信息
         hs = HarborService(harbor_url, credentials=harbor_credentials)
+        
+        # 先测试 Harbor 连接
+        if not hs.test_connection():
+            logger.warning(f"Harbor connection test failed for {harbor_url}, will try with config credentials")
+            # 如果 K8s Secret 的认证失败，尝试使用配置文件的认证
+            if harbor_credentials:
+                hs = HarborService(harbor_url)
+                if not hs.test_connection():
+                    raise HTTPException(
+                        status_code=503, 
+                        detail=f"无法连接到 Harbor 服务器: {harbor_url}，请检查网络连接或 Harbor 配置"
+                    )
         
         # 获取镜像标签
         tags = hs.get_image_tags(project, repository, page_size=limit)
@@ -138,9 +154,35 @@ async def get_service_image_tags(
             "current_image": service.current_image,
             "source": "k8s-secret" if harbor_credentials else "config",
         }
+    except HTTPException:
+        raise
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Harbor connection error for service {service_id}: {e}")
+        raise HTTPException(
+            status_code=503, 
+            detail=f"无法连接到 Harbor 服务器，请检查网络连接"
+        )
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Harbor API HTTP error for service {service_id}: {e}")
+        if e.response.status_code == 401:
+            raise HTTPException(
+                status_code=401, 
+                detail="Harbor 认证失败，请检查认证信息"
+            )
+        elif e.response.status_code == 404:
+            logger.error(f"Harbor repository not found: project={project}, repository={repository}, host={harbor_url}")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"镜像仓库不存在: project={project}, repository={repository}。请检查镜像地址是否正确。"
+            )
+        else:
+            raise HTTPException(
+                status_code=502, 
+                detail=f"Harbor API 错误: {e.response.status_code}"
+            )
     except Exception as e:
         logger.error(f"Failed to get image tags for service {service_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get image tags: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取镜像标签失败: {str(e)}")
 
 
 @router.get("/parse-image")

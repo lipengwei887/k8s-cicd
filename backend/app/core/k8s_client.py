@@ -208,17 +208,22 @@ class K8sService:
         timeout: int,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
-        """等待滚动更新完成"""
+        """等待滚动更新完成，包含 Pod 状态检查和失败检测"""
         client_mgr = await self._get_client()
         apps_v1 = client_mgr.apps_v1
+        core_v1 = client_mgr.core_v1
         
         start_time = asyncio.get_event_loop().time()
         check_interval = 3  # 检查间隔(秒)
+        consecutive_failures = 0  # 连续失败计数
+        max_consecutive_failures = 3  # 最大连续失败次数
         
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
             if elapsed > timeout:
-                raise asyncio.TimeoutError()
+                # 超时前获取 Pod 日志
+                logs = await self._get_failed_pods_logs(namespace, deployment_name)
+                raise asyncio.TimeoutError(f"Rolling update timeout. Pod logs: {logs}")
             
             try:
                 # 获取 Deployment 状态
@@ -238,6 +243,9 @@ class K8sService:
                 available = status.available_replicas or 0
                 unavailable = status.unavailable_replicas or 0
                 
+                # 获取 Pod 详细状态
+                pod_status = await self._get_pods_status(namespace, deployment_name)
+                
                 progress = {
                     'desired': desired,
                     'updated': updated,
@@ -246,8 +254,29 @@ class K8sService:
                     'unavailable': unavailable,
                     'progress_percent': (ready / desired * 100) if desired > 0 else 0,
                     'elapsed_seconds': int(elapsed),
-                    'status': 'updating'
+                    'status': 'updating',
+                    'pods': pod_status
                 }
+                
+                # 检查是否有 Pod 启动失败
+                failed_pods = [p for p in pod_status if p.get('status') in ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error']]
+                if failed_pods:
+                    # 获取失败 Pod 的日志
+                    logs = await self._get_failed_pods_logs(namespace, deployment_name, failed_pods)
+                    progress['status'] = 'failed'
+                    progress['message'] = f"Pod start failed: {failed_pods[0].get('status')}"
+                    progress['failed_pods'] = failed_pods
+                    progress['logs'] = logs
+                    if progress_callback:
+                        await asyncio.to_thread(progress_callback, progress)
+                    return {
+                        'success': False,
+                        'message': f"Rolling update failed: {failed_pods[0].get('status')}. Logs: {logs[:500]}",
+                        'ready_replicas': ready,
+                        'duration': int(elapsed),
+                        'failed_pods': failed_pods,
+                        'logs': logs
+                    }
                 
                 # 检查更新条件
                 conditions = status.conditions or []
@@ -257,28 +286,58 @@ class K8sService:
                 )
                 
                 if progressing and progressing.reason == 'ProgressDeadlineExceeded':
+                    logs = await self._get_failed_pods_logs(namespace, deployment_name)
                     progress['status'] = 'failed'
                     progress['message'] = 'Progress deadline exceeded'
+                    progress['logs'] = logs
                     if progress_callback:
                         await asyncio.to_thread(progress_callback, progress)
                     return {
                         'success': False,
-                        'message': 'Rolling update failed: progress deadline exceeded',
+                        'message': f"Rolling update failed: progress deadline exceeded. Logs: {logs[:500]}",
                         'ready_replicas': ready,
-                        'duration': int(elapsed)
+                        'duration': int(elapsed),
+                        'logs': logs
                     }
                 
-                # 检查是否完成
-                if updated == desired and ready == desired and available == desired:
+                # 检查是否完成：所有 Pod 都 ready 且可用
+                if updated == desired and ready == desired and available == desired and ready > 0:
                     progress['status'] = 'completed'
                     if progress_callback:
                         await asyncio.to_thread(progress_callback, progress)
+                    
+                    # 获取成功的 Pod 日志（最后几条）
+                    logs = await self._get_pods_logs(namespace, deployment_name, tail_lines=50)
+                    
                     return {
                         'success': True,
                         'message': 'Rolling update completed successfully',
                         'ready_replicas': ready,
-                        'duration': int(elapsed)
+                        'duration': int(elapsed),
+                        'pod_status': pod_status,
+                        'logs': logs
                     }
+                
+                # 如果 updated == desired 但 ready < desired，说明 Pod 启动有问题
+                if updated == desired and ready < desired and elapsed > 30:
+                    # 等待30秒后检查是否有 Pod 问题
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_consecutive_failures:
+                        logs = await self._get_failed_pods_logs(namespace, deployment_name)
+                        progress['status'] = 'failed'
+                        progress['message'] = f'Pods not ready after {int(elapsed)}s'
+                        progress['logs'] = logs
+                        if progress_callback:
+                            await asyncio.to_thread(progress_callback, progress)
+                        return {
+                            'success': False,
+                            'message': f"Rolling update failed: Pods not ready after {int(elapsed)}s. Logs: {logs[:500]}",
+                            'ready_replicas': ready,
+                            'duration': int(elapsed),
+                            'logs': logs
+                        }
+                else:
+                    consecutive_failures = 0
                 
                 # 回调进度
                 if progress_callback:
@@ -358,3 +417,112 @@ class K8sService:
         except ApiException as e:
             logger.error(f"Failed to get deployment status: {e}")
             raise K8sClientError(f"Failed to get status: {e.reason}")
+    
+    async def _get_pods_status(self, namespace: str, deployment_name: str) -> list:
+        """获取 Deployment 关联的 Pod 状态列表"""
+        try:
+            client_mgr = await self._get_client()
+            apps_v1 = client_mgr.apps_v1
+            core_v1 = client_mgr.core_v1
+            
+            # 获取 Deployment
+            deployment = await asyncio.to_thread(
+                apps_v1.read_namespaced_deployment,
+                name=deployment_name,
+                namespace=namespace
+            )
+            
+            # 获取 Pod 列表
+            selector = deployment.spec.selector.match_labels
+            label_selector = ','.join([f"{k}={v}" for k, v in selector.items()])
+            
+            pods = await asyncio.to_thread(
+                core_v1.list_namespaced_pod,
+                namespace=namespace,
+                label_selector=label_selector
+            )
+            
+            pod_status_list = []
+            for pod in pods.items:
+                # 获取容器状态
+                container_statuses = pod.status.container_statuses or []
+                
+                # 检查是否有等待状态的容器（如 ImagePullBackOff）
+                waiting_reason = None
+                for cs in container_statuses:
+                    if cs.state and cs.state.waiting:
+                        waiting_reason = cs.state.waiting.reason
+                        break
+                    if cs.state and cs.state.terminated and cs.state.terminated.exit_code != 0:
+                        waiting_reason = f"Error (exit {cs.state.terminated.exit_code})"
+                
+                # 确定 Pod 状态
+                if waiting_reason:
+                    status = waiting_reason
+                elif pod.status.phase == 'Running' and all(cs.ready for cs in container_statuses):
+                    status = 'Running'
+                else:
+                    status = pod.status.phase
+                
+                pod_status_list.append({
+                    'name': pod.metadata.name,
+                    'status': status,
+                    'phase': pod.status.phase,
+                    'ready': all(cs.ready for cs in container_statuses) if container_statuses else False,
+                    'restarts': sum(cs.restart_count for cs in container_statuses),
+                    'age': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None
+                })
+            
+            return pod_status_list
+            
+        except Exception as e:
+            logger.error(f"Failed to get pods status: {e}")
+            return []
+    
+    async def _get_pods_logs(self, namespace: str, deployment_name: str, tail_lines: int = 50) -> str:
+        """获取 Pod 的日志（用于成功的发布）"""
+        try:
+            client_mgr = await self._get_client()
+            apps_v1 = client_mgr.apps_v1
+            core_v1 = client_mgr.core_v1
+            
+            # 获取 Deployment
+            deployment = await asyncio.to_thread(
+                apps_v1.read_namespaced_deployment,
+                name=deployment_name,
+                namespace=namespace
+            )
+            
+            # 获取 Pod 列表
+            selector = deployment.spec.selector.match_labels
+            label_selector = ','.join([f"{k}={v}" for k, v in selector.items()])
+            
+            pods = await asyncio.to_thread(
+                core_v1.list_namespaced_pod,
+                namespace=namespace,
+                label_selector=label_selector
+            )
+            
+            logs = []
+            for pod in pods.items[:3]:  # 最多获取3个 Pod 的日志
+                try:
+                    pod_logs = await asyncio.to_thread(
+                        core_v1.read_namespaced_pod_log,
+                        name=pod.metadata.name,
+                        namespace=namespace,
+                        tail_lines=tail_lines
+                    )
+                    logs.append(f"=== {pod.metadata.name} ===\n{pod_logs}")
+                except Exception as e:
+                    logs.append(f"=== {pod.metadata.name} ===\nFailed to get logs: {str(e)}")
+            
+            return '\n\n'.join(logs)
+            
+        except Exception as e:
+            logger.error(f"Failed to get pods logs: {e}")
+            return f"Failed to get logs: {str(e)}"
+    
+    async def _get_failed_pods_logs(self, namespace: str, deployment_name: str, failed_pods: list = None) -> str:
+        """获取失败 Pod 的日志"""
+        # 复用 _get_pods_logs 方法
+        return await self._get_pods_logs(namespace, deployment_name, tail_lines=100)

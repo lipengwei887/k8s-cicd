@@ -95,3 +95,37 @@ async def get_service_images(
             "latest"
         ]
     }
+
+
+@router.post("/batch-names")
+async def get_service_names_batch(
+    service_ids: List[int],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    批量获取服务名称（用于发布记录展示优化）
+    只返回 id、name、display_name 字段，避免加载大量数据
+    """
+    if not service_ids:
+        return {}
+    
+    # 去重
+    unique_ids = list(set(service_ids))
+    
+    # 批量查询
+    result = await db.execute(
+        select(Service.id, Service.name, Service.display_name)
+        .where(Service.id.in_(unique_ids))
+        .where(Service.status == 1)
+    )
+    
+    # 转换为字典 {id: {name, display_name}}
+    services_map = {}
+    for row in result.fetchall():
+        services_map[row[0]] = {
+            "name": row[1],
+            "display_name": row[2]
+        }
+    
+    return services_map

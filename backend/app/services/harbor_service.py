@@ -52,9 +52,11 @@ class HarborService:
             响应数据
         """
         url = f"{self.base_url}/api/v2.0{path}"
+        logger.info(f"Harbor API request: {url}")
         
         try:
             response = self.session.get(url, params=params, timeout=30)
+            logger.info(f"Harbor API response status: {response.status_code}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -144,8 +146,9 @@ class HarborService:
         """
         try:
             # URL 编码项目名称和仓库名
+            # Harbor API 需要双层 URL 编码
             encoded_project = quote(project, safe='')
-            encoded_repo = quote(repository, safe='')
+            encoded_repo = quote(quote(repository, safe=''), safe='')
             
             # 调用 Harbor API 获取 artifacts
             path = f"/projects/{encoded_project}/repositories/{encoded_repo}/artifacts"

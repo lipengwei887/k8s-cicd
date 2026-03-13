@@ -300,7 +300,7 @@ async def sync_cluster(
         raise HTTPException(status_code=500, detail=f"Failed to sync cluster: {str(e)}")
 
 
-@router.post("/upload-kubeconfig", dependencies=[Depends(require_admin)])
+@router.post("/upload-kubeconfig")
 async def upload_kubeconfig(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -310,8 +310,15 @@ async def upload_kubeconfig(
     上传 kubeconfig 文件创建集群
     自动解析 kubeconfig 并同步命名空间和服务
     """
+    # 检查权限
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    
     # 解析 multipart/form-data
-    form = await request.form()
+    try:
+        form = await request.form()
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse form data: {str(e)}")
     
     name = form.get('name')
     display_name = form.get('display_name')
@@ -319,7 +326,7 @@ async def upload_kubeconfig(
     kubeconfig_file = form.get('kubeconfig_file')
     
     if not name or not display_name:
-        raise HTTPException(status_code=422, detail="name and display_name are required")
+        raise HTTPException(status_code=422, detail=f"name and display_name are required. Got: name={name}, display_name={display_name}")
     
     if not kubeconfig_file:
         raise HTTPException(status_code=422, detail="kubeconfig_file is required")
@@ -370,39 +377,73 @@ async def upload_kubeconfig(
         ns_list = sync_service.sync_namespaces()
         
         for ns_info in ns_list:
-            # 创建命名空间
-            new_ns = Namespace(
-                cluster_id=db_cluster.id,
-                name=ns_info['name'],
-                display_name=ns_info['display_name'],
-                env_type=ns_info['env_type'],
-                status=1,
-                description=ns_info['description']
+            # 检查命名空间是否已存在
+            result = await db.execute(
+                select(Namespace).where(
+                    Namespace.cluster_id == db_cluster.id,
+                    Namespace.name == ns_info['name']
+                )
             )
-            db.add(new_ns)
-            await db.commit()
-            await db.refresh(new_ns)
+            existing_ns = result.scalar_one_or_none()
+            
+            if existing_ns:
+                # 更新现有命名空间
+                existing_ns.env_type = ns_info['env_type']
+                existing_ns.status = 1
+                namespace_id = existing_ns.id
+            else:
+                # 创建新命名空间
+                new_ns = Namespace(
+                    cluster_id=db_cluster.id,
+                    name=ns_info['name'],
+                    display_name=ns_info['display_name'],
+                    env_type=ns_info['env_type'],
+                    status=1,
+                    description=ns_info['description']
+                )
+                db.add(new_ns)
+                await db.commit()
+                await db.refresh(new_ns)
+                namespace_id = new_ns.id
             
             # 同步 Deployment
             try:
                 deployments = sync_service.sync_deployments(ns_info['name'])
                 for deploy_info in deployments:
-                    new_svc = Service(
-                        namespace_id=new_ns.id,
-                        name=deploy_info['name'],
-                        display_name=deploy_info['display_name'],
-                        type=deploy_info['type'],
-                        deploy_name=deploy_info['deploy_name'],
-                        container_name=deploy_info['container_name'],
-                        harbor_project=deploy_info.get('harbor_project'),
-                        harbor_repo=deploy_info.get('harbor_repo'),
-                        current_image=deploy_info.get('current_image'),  # 保存当前镜像
-                        port=deploy_info.get('port'),
-                        replicas=deploy_info['replicas'],
-                        status=1,
-                        description=deploy_info['description']
+                    # 检查服务是否已存在
+                    result = await db.execute(
+                        select(Service).where(
+                            Service.namespace_id == namespace_id,
+                            Service.name == deploy_info['name']
+                        )
                     )
-                    db.add(new_svc)
+                    existing_svc = result.scalar_one_or_none()
+                    
+                    if existing_svc:
+                        # 更新现有服务
+                        existing_svc.replicas = deploy_info['replicas']
+                        existing_svc.status = 1
+                        existing_svc.current_image = deploy_info.get('current_image')
+                        existing_svc.harbor_project = deploy_info.get('harbor_project')
+                        existing_svc.harbor_repo = deploy_info.get('harbor_repo')
+                    else:
+                        # 创建新服务
+                        new_svc = Service(
+                            namespace_id=namespace_id,
+                            name=deploy_info['name'],
+                            display_name=deploy_info['display_name'],
+                            type=deploy_info['type'],
+                            deploy_name=deploy_info['deploy_name'],
+                            container_name=deploy_info['container_name'],
+                            harbor_project=deploy_info.get('harbor_project'),
+                            harbor_repo=deploy_info.get('harbor_repo'),
+                            current_image=deploy_info.get('current_image'),
+                            port=deploy_info.get('port'),
+                            replicas=deploy_info['replicas'],
+                            status=1,
+                            description=deploy_info['description']
+                        )
+                        db.add(new_svc)
             except Exception as e:
                 logger.warning(f"Failed to sync deployments: {e}")
             
@@ -410,22 +451,40 @@ async def upload_kubeconfig(
             try:
                 statefulsets = sync_service.sync_statefulsets(ns_info['name'])
                 for sts_info in statefulsets:
-                    new_svc = Service(
-                        namespace_id=new_ns.id,
-                        name=sts_info['name'],
-                        display_name=sts_info['display_name'],
-                        type=sts_info['type'],
-                        deploy_name=sts_info['deploy_name'],
-                        current_image=sts_info.get('current_image'),  # 保存当前镜像
-                        container_name=sts_info['container_name'],
-                        harbor_project=sts_info.get('harbor_project'),
-                        harbor_repo=sts_info.get('harbor_repo'),
-                        port=sts_info.get('port'),
-                        replicas=sts_info['replicas'],
-                        status=1,
-                        description=sts_info['description']
+                    # 检查服务是否已存在
+                    result = await db.execute(
+                        select(Service).where(
+                            Service.namespace_id == namespace_id,
+                            Service.name == sts_info['name']
+                        )
                     )
-                    db.add(new_svc)
+                    existing_svc = result.scalar_one_or_none()
+                    
+                    if existing_svc:
+                        # 更新现有服务
+                        existing_svc.replicas = sts_info['replicas']
+                        existing_svc.status = 1
+                        existing_svc.current_image = sts_info.get('current_image')
+                        existing_svc.harbor_project = sts_info.get('harbor_project')
+                        existing_svc.harbor_repo = sts_info.get('harbor_repo')
+                    else:
+                        # 创建新服务
+                        new_svc = Service(
+                            namespace_id=namespace_id,
+                            name=sts_info['name'],
+                            display_name=sts_info['display_name'],
+                            type=sts_info['type'],
+                            deploy_name=sts_info['deploy_name'],
+                            current_image=sts_info.get('current_image'),
+                            container_name=sts_info['container_name'],
+                            harbor_project=sts_info.get('harbor_project'),
+                            harbor_repo=sts_info.get('harbor_repo'),
+                            port=sts_info.get('port'),
+                            replicas=sts_info['replicas'],
+                            status=1,
+                            description=sts_info['description']
+                        )
+                        db.add(new_svc)
             except Exception as e:
                 logger.warning(f"Failed to sync statefulsets: {e}")
         
@@ -440,3 +499,24 @@ async def upload_kubeconfig(
 # 添加 logger 导入
 import logging
 logger = logging.getLogger(__name__)
+
+
+@router.get("/stats/summary")
+async def get_cluster_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    获取集群统计摘要（高性能，适用于大量数据）
+    返回集群数量、服务数量等统计信息
+    """
+    # 使用 COUNT 查询，不加载实际数据
+    cluster_count = await db.execute(select(func.count(Cluster.id)).where(Cluster.status == 1))
+    service_count = await db.execute(select(func.count(Service.id)).where(Service.status == 1))
+    namespace_count = await db.execute(select(func.count(Namespace.id)).where(Namespace.status == 1))
+    
+    return {
+        "clusters": cluster_count.scalar(),
+        "services": service_count.scalar(),
+        "namespaces": namespace_count.scalar(),
+    }

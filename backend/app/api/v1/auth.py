@@ -87,10 +87,40 @@ async def login(
     }
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_active_user)):
-    """获取当前用户信息"""
-    return current_user
+@router.get("/me")
+async def get_me(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取当前用户信息，包含权限列表"""
+    from app.services.rbac_service import RBACService
+    
+    # 超级管理员拥有所有权限
+    if current_user.is_superuser:
+        # 从角色权限关联表中获取所有权限代码
+        from app.models.role import RBACPermission
+        result = await db.execute(select(RBACPermission))
+        all_permissions = result.scalars().all()
+        permission_codes = [p.code for p in all_permissions]
+    else:
+        # 获取用户权限列表
+        rbac_service = RBACService(db)
+        permission_objects = await rbac_service.get_user_permissions(current_user.id)
+        # 提取权限代码为字符串列表
+        permission_codes = [p.get("permission_code") for p in permission_objects if p.get("permission_code")]
+    
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "real_name": current_user.real_name,
+        "role": current_user.role.value if current_user.role else None,
+        "status": current_user.status,
+        "is_superuser": current_user.is_superuser,
+        "last_login_at": current_user.last_login_at,
+        "created_at": current_user.created_at,
+        "permissions": permission_codes
+    }
 
 
 @router.post("/logout")

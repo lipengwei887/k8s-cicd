@@ -55,6 +55,9 @@ class K8sSyncService:
     def get_harbor_secret(self, namespace: str = "default", secret_name: str = "harbor-secret") -> Optional[Dict[str, str]]:
         """
         从 K8s Secret 获取 Harbor 认证信息
+        支持两种格式：
+        1. 直接包含 username/password 字段的 secret
+        2. .dockerconfigjson 格式的 secret（kubernetes.io/dockerconfigjson 类型）
         
         Args:
             namespace: Secret 所在的命名空间
@@ -86,6 +89,45 @@ class K8sSyncService:
                     import base64
                     password = base64.b64decode(data[key]).decode('utf-8')
                     break
+            
+            # 如果直接字段没找到，尝试解析 .dockerconfigjson 格式
+            if not (username and password) and '.dockerconfigjson' in data:
+                try:
+                    import json
+                    import base64
+                    docker_config = base64.b64decode(data['.dockerconfigjson']).decode('utf-8')
+                    config = json.loads(docker_config)
+                    
+                    # 从 auths 中提取认证信息
+                    auths = config.get('auths', {})
+                    for registry, auth_data in auths.items():
+                        # 优先找包含 harbor 的 registry
+                        if 'harbor' in registry.lower():
+                            auth = auth_data.get('auth', '')
+                            if auth:
+                                # auth 是 base64(username:password) 格式
+                                decoded_auth = base64.b64decode(auth).decode('utf-8')
+                                if ':' in decoded_auth:
+                                    username, password = decoded_auth.split(':', 1)
+                                    logger.info(f"Found Harbor credentials in .dockerconfigjson for registry: {registry}")
+                                    break
+                            # 也可以直接有 username/password 字段
+                            if not username and 'username' in auth_data:
+                                username = auth_data['username']
+                            if not password and 'password' in auth_data:
+                                password = auth_data['password']
+                    
+                    # 如果没找到 harbor 特定的，取第一个
+                    if not (username and password) and auths:
+                        first_registry = list(auths.values())[0]
+                        auth = first_registry.get('auth', '')
+                        if auth:
+                            decoded_auth = base64.b64decode(auth).decode('utf-8')
+                            if ':' in decoded_auth:
+                                username, password = decoded_auth.split(':', 1)
+                                logger.info(f"Found credentials in .dockerconfigjson (first registry)")
+                except Exception as e:
+                    logger.warning(f"Failed to parse .dockerconfigjson: {e}")
             
             if username and password:
                 logger.info(f"Found Harbor credentials in secret {secret_name}")
@@ -138,9 +180,24 @@ class K8sSyncService:
             logger.error(f"Failed to list secrets in namespace {namespace}: {e}")
             return None
     
+    # K8s 系统命名空间列表，这些命名空间将被忽略
+    # 包括：kube- 开头、ack- 开头、以及其他已知的系统命名空间
+    # 注意：default 命名空间不过滤，用户可能在此部署应用
+    SYSTEM_NAMESPACES = {
+        'kube-system', 'kube-public', 'kube-node-lease',
+        'kubernetes-dashboard', 'ingress-nginx',
+        'calico-system', 'tigera-operator', 'cattle-system',
+        'cattle-prometheus', 'cattle-logging', 'longhorn-system',
+        'istio-system', 'knative-serving', 'cert-manager',
+        'gatekeeper-system', 'kubevirt', 'openshift',
+    }
+    
+    # 系统命名空间前缀，以这些前缀开头的命名空间将被忽略
+    SYSTEM_NAMESPACE_PREFIXES = ('kube-', 'ack-')
+    
     def sync_namespaces(self) -> List[Dict[str, Any]]:
         """
-        同步命名空间列表
+        同步命名空间列表（排除系统命名空间）
         
         Returns:
             命名空间列表
@@ -150,18 +207,30 @@ class K8sSyncService:
             result = []
             
             for ns in namespaces.items:
+                ns_name = ns.metadata.name
+                
+                # 跳过系统命名空间（精确匹配或前缀匹配）
+                if ns_name in self.SYSTEM_NAMESPACES:
+                    logger.debug(f"Skipping system namespace: {ns_name}")
+                    continue
+                
+                # 跳过以系统前缀开头的命名空间
+                if ns_name.startswith(self.SYSTEM_NAMESPACE_PREFIXES):
+                    logger.debug(f"Skipping system namespace (prefix match): {ns_name}")
+                    continue
+                
                 # 根据命名空间名称判断环境类型
-                env_type = self._detect_env_type(ns.metadata.name)
+                env_type = self._detect_env_type(ns_name)
                 
                 result.append({
-                    'name': ns.metadata.name,
-                    'display_name': ns.metadata.name,
+                    'name': ns_name,
+                    'display_name': ns_name,
                     'env_type': env_type,
                     'status': 1,
-                    'description': f'从集群同步的命名空间: {ns.metadata.name}'
+                    'description': f'从集群同步的命名空间: {ns_name}'
                 })
             
-            logger.info(f"Synced {len(result)} namespaces")
+            logger.info(f"Synced {len(result)} namespaces (excluded {len(namespaces.items) - len(result)} system namespaces)")
             return result
             
         except ApiException as e:
@@ -322,7 +391,7 @@ class K8sSyncService:
                 # 格式: harbor.example.com/project/repo
                 return {
                     'harbor_project': parts[1],
-                    'harbor_repo': parts[2]
+                    'harbor_repo': '/'.join(parts[2:])
                 }
             elif len(parts) == 2:
                 # 格式: project/repo

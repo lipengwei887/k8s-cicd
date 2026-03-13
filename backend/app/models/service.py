@@ -35,3 +35,4 @@ class Service(Base):
     # 关系
     namespace = relationship("Namespace", back_populates="services")
     releases = relationship("ReleaseRecord", back_populates="service")
+    role_groups = relationship("RoleGroupService", back_populates="service")

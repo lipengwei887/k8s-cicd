@@ -28,3 +28,4 @@ class Namespace(Base):
     # 关系
     cluster = relationship("Cluster", back_populates="namespaces")
     services = relationship("Service", back_populates="namespace", cascade="all, delete-orphan")
+    role_groups = relationship("RoleGroupNamespace", back_populates="namespace")

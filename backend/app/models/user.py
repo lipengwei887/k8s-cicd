@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum, DateTime, TIMESTAMP
+from sqlalchemy import Column, Integer, String, Enum, DateTime, TIMESTAMP, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -26,6 +26,16 @@ class User(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     
+    # 组织归属
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    
+    # 状态管理
+    is_superuser = Column(Boolean, default=False)  # 超级管理员
+    mfa_enabled = Column(Boolean, default=False)   # 多因素认证
+    
     # 关系
     permissions = relationship("Permission", back_populates="user", cascade="all, delete-orphan")
     releases = relationship("ReleaseRecord", foreign_keys="ReleaseRecord.operator_id", back_populates="operator")
+    user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
+    role_groups = relationship("UserRoleGroup", back_populates="user", cascade="all, delete-orphan")
+    organization = relationship("Organization")

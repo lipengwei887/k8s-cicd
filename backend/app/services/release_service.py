@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +29,20 @@ class ReleaseService:
         service_id: int,
         operator_id: int,
         image_tag: str,
-        version: Optional[str] = None,
-        require_approval: bool = False
+        require_approval: bool = False,
+        validity_period: int = 0,
+        parent_release_id: Optional[int] = None
     ) -> ReleaseRecord:
-        """创建发布单"""
+        """创建发布单
+        
+        Args:
+            service_id: 服务ID
+            operator_id: 操作人ID
+            image_tag: 镜像标签
+            require_approval: 是否需要审批
+            validity_period: 时效时长（小时），0 表示不限制
+            parent_release_id: 父发布单ID（时效内重复执行时使用）
+        """
         # 获取服务信息
         result = await self.db.execute(
             select(Service).where(Service.id == service_id)
@@ -47,25 +57,76 @@ class ReleaseService:
         # 构建完整镜像路径
         image_full_path = self._build_image_path(service, image_tag)
         
+        # 确定发布状态
+        # 如果是时效内重复执行，直接设置为 pending（免审批）
+        is_repeated = parent_release_id is not None
+        if is_repeated:
+            status = ReleaseStatus.PENDING
+        else:
+            status = ReleaseStatus.PENDING if not require_approval else ReleaseStatus.APPROVING
+        
+        # 计算时效时间
+        validity_start_at = None
+        validity_end_at = None
+        if validity_period > 0:
+            validity_start_at = datetime.utcnow()
+            validity_end_at = validity_start_at + timedelta(hours=validity_period)
+        
         # 创建发布记录
         release = ReleaseRecord(
             service_id=service_id,
             operator_id=operator_id,
-            version=version or image_tag,
             image_tag=image_tag,
             image_full_path=image_full_path,
             previous_image=current_image,
-            status=ReleaseStatus.PENDING if not require_approval else ReleaseStatus.APPROVING,
-            message='Waiting for execution'
+            status=status,
+            message='Waiting for execution',
+            validity_period=validity_period,
+            validity_start_at=validity_start_at,
+            validity_end_at=validity_end_at,
+            parent_release_id=parent_release_id,
+            is_repeated=1 if is_repeated else 0
         )
         
         self.db.add(release)
         await self.db.commit()
         await self.db.refresh(release)
         
-        logger.info(f"Release created: {release.id} for service {service.name}")
+        logger.info(f"Release created: {release.id} for service {service.name}, validity_period={validity_period}h, is_repeated={is_repeated}")
         
         return release
+    
+    async def check_validity_for_reexecution(
+        self,
+        parent_release_id: int,
+        operator_id: int
+    ) -> Optional[ReleaseRecord]:
+        """检查是否可以在时效内免审批重新执行发布
+        
+        Args:
+            parent_release_id: 父发布单ID
+            operator_id: 操作人ID
+            
+        Returns:
+            如果可以在时效内执行，返回父发布单记录，否则返回 None
+        """
+        result = await self.db.execute(
+            select(ReleaseRecord).where(ReleaseRecord.id == parent_release_id)
+        )
+        parent_release = result.scalar_one_or_none()
+        
+        if not parent_release:
+            return None
+        
+        # 检查是否是同一用户
+        if parent_release.operator_id != operator_id:
+            return None
+        
+        # 检查时效
+        if not parent_release.can_execute_without_approval():
+            return None
+        
+        return parent_release
     
     async def execute_release(
         self,
@@ -136,6 +197,8 @@ class ReleaseService:
             # 更新发布记录
             release.status = ReleaseStatus.SUCCESS if result['success'] else ReleaseStatus.FAILED
             release.message = result['message']
+            release.pod_status = json.dumps(result.get('pod_status', [])) if result.get('pod_status') else None
+            release.logs = result.get('logs', '')  # 保存 Pod 日志
             release.completed_at = datetime.utcnow()
             await self.db.commit()
             
@@ -149,6 +212,9 @@ class ReleaseService:
         except DeploymentUpdateError as e:
             release.status = ReleaseStatus.FAILED
             release.message = str(e)
+            # 尝试从异常信息中提取日志
+            if hasattr(e, 'logs'):
+                release.logs = e.logs
             release.completed_at = datetime.utcnow()
             await self.db.commit()
             
@@ -177,7 +243,7 @@ class ReleaseService:
             raise ValueError(f"Release {release_id} not found")
         
         if not release.previous_image:
-            raise ValueError("No previous version available for rollback")
+            raise ValueError("No previous image available for rollback")
         
         # 获取服务和集群信息
         service_result = await self.db.execute(
@@ -201,7 +267,6 @@ class ReleaseService:
         rollback_release = ReleaseRecord(
             service_id=release.service_id,
             operator_id=operator_id,
-            version=f"rollback-{release.version}",
             image_tag=release.previous_image.split(':')[-1],
             image_full_path=release.previous_image,
             previous_image=release.image_full_path,

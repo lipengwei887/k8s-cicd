@@ -9,6 +9,7 @@ class PermissionRole(str, enum.Enum):
     ADMIN = "admin"
     DEVELOPER = "developer"
     VIEWER = "viewer"
+    OPERATOR = "operator"
 
 
 class Permission(Base):
