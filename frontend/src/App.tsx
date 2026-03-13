@@ -1,4 +1,4 @@
-import React from 'react'
+import type React from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from 'antd'
 import Login from './pages/Login/index'
@@ -8,6 +8,9 @@ import AdminLayout from './pages/Admin/index'
 import ClusterManager from './pages/Admin/ClusterManager'
 import UserManager from './pages/Admin/UserManager'
 import PermissionManager from './pages/Admin/PermissionManager'
+import RoleManager from './pages/Admin/RoleManager'
+import UserRoleManager from './pages/Admin/UserRoleManager'
+import RoleGroupManager from './pages/Admin/RoleGroupManager'
 import './App.css'
 
 const { Content } = Layout
@@ -27,6 +30,9 @@ function App() {
               <Route path="clusters" element={<ClusterManager />} />
               <Route path="users" element={<UserManager />} />
               <Route path="permissions" element={<PermissionManager />} />
+              <Route path="roles" element={<RoleManager />} />
+              <Route path="user-roles" element={<UserRoleManager />} />
+              <Route path="role-groups" element={<RoleGroupManager />} />
               <Route path="" element={<Navigate to="/admin/clusters" replace />} />
             </Route>
             

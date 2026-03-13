@@ -6,6 +6,9 @@ import {
   TeamOutlined,
   SafetyOutlined,
   ArrowLeftOutlined,
+  UserOutlined,
+  KeyOutlined,
+  GroupOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content } = Layout
@@ -26,9 +29,31 @@ const AdminLayout: React.FC = () => {
       label: '人员管理',
     },
     {
-      key: '/admin/permissions',
+      key: 'rbac',
       icon: <SafetyOutlined />,
       label: '权限管理',
+      children: [
+        {
+          key: '/admin/roles',
+          icon: <KeyOutlined />,
+          label: '角色管理',
+        },
+        {
+          key: '/admin/user-roles',
+          icon: <UserOutlined />,
+          label: '用户角色',
+        },
+        {
+          key: '/admin/permissions',
+          icon: <SafetyOutlined />,
+          label: '权限配置',
+        },
+        {
+          key: '/admin/role-groups',
+          icon: <GroupOutlined />,
+          label: '角色组管理',
+        },
+      ]
     },
   ]
 

@@ -42,8 +42,12 @@ const ReleaseForm: React.FC = () => {
   const [releaseProgress, setReleaseProgress] = useState<ReleaseProgress | null>(null)
   const [releaseStatus, setReleaseStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle')
 
-  // WebSocket 连接
-  const wsUrl = releaseId ? `ws://localhost:8000/api/v1/releases/${releaseId}/progress` : null
+  // WebSocket 连接 - 动态构建 URL，支持相对路径和自动切换 ws/wss
+  const wsUrl = releaseId ? (() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    return `${protocol}//${host}/api/v1/releases/${releaseId}/progress`
+  })() : null
   const { readyState } = useWebSocket(wsUrl, {
     onMessage: (data) => {
       setReleaseProgress(data)
@@ -129,8 +133,11 @@ const ReleaseForm: React.FC = () => {
     try {
       const res: any = await harborApi.getServiceImageTags(service.id, 100)
       setImageTags(prev => ({ ...prev, [service.id]: res.items || [] }))
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Failed to load image tags for service ${service.id}:`, error)
+      // 显示错误提示，但不阻断用户操作
+      const errorMsg = error?.response?.data?.detail || '获取镜像标签失败'
+      message.warning(`服务 "${service.name}": ${errorMsg}`)
       setImageTags(prev => ({ ...prev, [service.id]: [] }))
     }
   }
@@ -172,6 +179,7 @@ const ReleaseForm: React.FC = () => {
           service_id: serviceId,
           image_tag: imageTag,
           require_approval: values.require_approval,
+          validity_period: values.validity_period || 0,
         })
         releaseIds.push(res.id)
       }
@@ -326,6 +334,34 @@ const ReleaseForm: React.FC = () => {
 
           <Form.Item name="require_approval" valuePropName="checked">
             <Checkbox>需要审批</Checkbox>
+          </Form.Item>
+          
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) => prevValues.require_approval !== currentValues.require_approval}
+          >
+            {({ getFieldValue }) => {
+              return getFieldValue('require_approval') ? (
+                <Form.Item
+                  label="审批时效"
+                  name="validity_period"
+                  initialValue={0}
+                  tooltip="审批通过后，在时效内可以免审批再次发布"
+                >
+                  <Select placeholder="选择时效（可选）" style={{ width: 200 }}>
+                    <Option value={0}>不限制（每次都需要审批）</Option>
+                    <Option value={1}>1小时</Option>
+                    <Option value={2}>2小时</Option>
+                    <Option value={4}>4小时</Option>
+                    <Option value={8}>8小时</Option>
+                    <Option value={24}>1天</Option>
+                    <Option value={48}>2天</Option>
+                    <Option value={72}>3天</Option>
+                    <Option value={168}>7天</Option>
+                  </Select>
+                </Form.Item>
+              ) : null
+            }}
           </Form.Item>
         </>
       ),

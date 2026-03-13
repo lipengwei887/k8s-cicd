@@ -63,10 +63,14 @@ const ClusterManager: React.FC = () => {
     formData.append('display_name', values.display_name)
     formData.append('description', values.description || '')
     
-    const file = fileList[0].originFileObj
-    if (file) {
-      formData.append('kubeconfig_file', file)
+    // 获取文件对象
+    const uploadFile = fileList[0]
+    const file = uploadFile.originFileObj
+    if (!file) {
+      message.error('文件对象不存在，请重新选择文件')
+      return
     }
+    formData.append('kubeconfig_file', file, uploadFile.name)
 
     try {
       await clusterApi.uploadKubeconfig(formData)
@@ -76,6 +80,7 @@ const ClusterManager: React.FC = () => {
       setFileList([])
       loadClusters()
     } catch (error: any) {
+      console.error('Upload error:', error.response?.data)
       message.error(error.response?.data?.detail || '添加集群失败')
     }
   }
@@ -168,13 +173,19 @@ const ClusterManager: React.FC = () => {
     onRemove: () => {
       setFileList([])
     },
-    beforeUpload: (file: UploadFile) => {
+    beforeUpload: (file: any) => {
       const isYaml = file.name.endsWith('.yaml') || file.name.endsWith('.yml')
       if (!isYaml) {
         message.error('请上传 YAML 格式的 kubeconfig 文件')
         return false
       }
-      setFileList([file])
+      // 保存文件对象
+      setFileList([{
+        uid: file.uid || Date.now().toString(),
+        name: file.name,
+        status: 'done',
+        originFileObj: file,
+      }])
       return false
     },
     fileList,

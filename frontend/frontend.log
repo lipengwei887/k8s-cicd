@@ -1,0 +1,12 @@
+
+> k8s-release-platform-frontend@1.0.0 dev
+> vite
+
+
+  VITE v5.4.21  ready in 173 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: use --host to expose
+16:31:06 [vite] hmr update /src/pages/Login/index.tsx, /src/pages/Dashboard/index.tsx, /src/pages/Admin/UserRoleManager.tsx, /src/pages/Admin/ClusterManager.tsx, /src/pages/Admin/UserManager.tsx, /src/pages/Admin/PermissionManager.tsx, /src/pages/Admin/RoleGroupManager.tsx, /src/components/ReleaseForm/index.tsx, /src/pages/Admin/RoleManager.tsx
+16:31:36 [vite] hmr update /src/App.tsx
+16:32:07 [vite] hmr update /src/pages/Dashboard/index.tsx

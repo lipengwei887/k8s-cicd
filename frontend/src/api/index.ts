@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios'
-import type { ApiResponse, ListResponse } from '@/types'
+import type { ListResponse } from '@/types'
 
 // 创建 axios 实例
 const api: AxiosInstance = axios.create({
@@ -33,6 +33,12 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
       window.location.href = '/login'
+    } else if (error.response?.status === 403) {
+      // 权限不足提示
+      const message = error.response?.data?.detail || '没有权限执行此操作'
+      import('antd').then(({ message: antdMessage }) => {
+        antdMessage.error(message)
+      })
     }
     return Promise.reject(error)
   }
@@ -92,7 +98,14 @@ export const clusterApi = {
   syncCluster: (id: number) => api.post(`/clusters/${id}/sync`),
   
   uploadKubeconfig: (formData: FormData) =>
-    api.post('/clusters/upload-kubeconfig', formData),
+    api.post('/clusters/upload-kubeconfig', formData, {
+      headers: {
+        'Content-Type': undefined, // 让浏览器自动设置 multipart/form-data
+      },
+    }),
+  
+  // 获取统计摘要（高性能）
+  getStatsSummary: () => api.get<{ clusters: number; services: number; namespaces: number }>('/clusters/stats/summary'),
 }
 
 // 服务相关 API
@@ -106,6 +119,10 @@ export const serviceApi = {
   
   getServiceImages: (id: number) =>
     api.get<ListResponse<string>>(`/services/${id}/images`),
+  
+  // 批量获取服务名称（高性能）
+  getServiceNamesBatch: (serviceIds: number[]) =>
+    api.post<Record<number, { name: string; display_name: string }>>('/services/batch-names', serviceIds),
 }
 
 // 发布相关 API
@@ -115,7 +132,7 @@ export const releaseApi = {
   
   getRelease: (id: number) => api.get<any>(`/releases/${id}`),
   
-  createRelease: (data: { service_id: number; image_tag: string; version?: string; require_approval?: boolean }) =>
+  createRelease: (data: { service_id: number; image_tag: string; require_approval?: boolean; validity_period?: number }) =>
     api.post('/releases', data),
   
   executeRelease: (id: number) => api.post(`/releases/${id}/execute`),
@@ -124,6 +141,22 @@ export const releaseApi = {
   
   approveRelease: (id: number, data: { approved: boolean; comment?: string }) =>
     api.post(`/releases/${id}/approve`, data),
+  
+  // 在时效内重新执行发布（免审批）
+  reexecuteRelease: (id: number, data: { service_id: number; image_tag: string }) =>
+    api.post(`/releases/${id}/reexecute`, data),
+  
+  // 检查发布时效状态
+  checkReleaseValidity: (id: number) =>
+    api.get<{
+      release_id: number;
+      validity_period: number;
+      validity_start_at: string;
+      validity_end_at: string;
+      is_expired: boolean;
+      can_reexecute: boolean;
+      is_owner: boolean;
+    }>(`/releases/${id}/validity`),
 }
 
 // Harbor 相关 API

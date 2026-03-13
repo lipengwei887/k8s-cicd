@@ -12,9 +12,11 @@ import {
   Tag,
   Popconfirm,
   Switch,
+  Divider,
 } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, KeyOutlined } from '@ant-design/icons'
 import { userApi } from '@/api'
+import { getRoles, getRoleGroups, assignRoleToUser, assignRoleGroupToUser } from '@/api/rbac'
 
 interface User {
   id: number
@@ -26,8 +28,24 @@ interface User {
   created_at: string
 }
 
+interface Role {
+  id: number
+  name: string
+  code: string
+  description?: string
+}
+
+interface RoleGroup {
+  id: number
+  name: string
+  code: string
+  description?: string
+}
+
 const UserManager: React.FC = () => {
   const [users, setUsers] = useState<User[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [roleGroups, setRoleGroups] = useState<RoleGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editModalVisible, setEditModalVisible] = useState(false)
@@ -37,7 +55,27 @@ const UserManager: React.FC = () => {
 
   useEffect(() => {
     loadUsers()
+    loadRoles()
+    loadRoleGroups()
   }, [])
+
+  const loadRoles = async () => {
+    try {
+      const res: any = await getRoles({ status: 1 })
+      setRoles(Array.isArray(res) ? res : (res.data || []))
+    } catch (error) {
+      console.error('加载角色列表失败', error)
+    }
+  }
+
+  const loadRoleGroups = async () => {
+    try {
+      const res: any = await getRoleGroups()
+      setRoleGroups(Array.isArray(res) ? res : (res.data || []))
+    } catch (error) {
+      console.error('加载角色组列表失败', error)
+    }
+  }
 
   const loadUsers = async () => {
     setLoading(true)
@@ -53,7 +91,38 @@ const UserManager: React.FC = () => {
 
   const handleCreate = async (values: any) => {
     try {
-      await userApi.createUser(values)
+      // 创建用户
+      const userRes: any = await userApi.createUser({
+        username: values.username,
+        password: values.password,
+        email: values.email,
+        real_name: values.real_name,
+        role: values.role,
+        status: 1
+      })
+      
+      const userId = userRes.id || userRes.data?.id
+      
+      // 分配角色（如果选择了）
+      if (userId && values.rbac_role_id) {
+        try {
+          await assignRoleToUser({ user_id: userId, role_id: values.rbac_role_id })
+        } catch (e) {
+          console.error('分配角色失败', e)
+        }
+      }
+      
+      // 分配角色组（如果选择了）
+      if (userId && values.role_group_ids && values.role_group_ids.length > 0) {
+        try {
+          for (const roleGroupId of values.role_group_ids) {
+            await assignRoleGroupToUser(userId, roleGroupId)
+          }
+        } catch (e) {
+          console.error('分配角色组失败', e)
+        }
+      }
+      
       message.success('用户创建成功')
       setModalVisible(false)
       form.resetFields()
@@ -265,6 +334,36 @@ const UserManager: React.FC = () => {
               <Select.Option value="developer">开发人员</Select.Option>
               <Select.Option value="approver">审批人员</Select.Option>
               <Select.Option value="viewer">只读用户</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Divider orientation="left">权限配置（可选）</Divider>
+
+          <Form.Item
+            label="RBAC角色"
+            name="rbac_role_id"
+            help="选择RBAC系统中定义的角色，用于细粒度权限控制"
+          >
+            <Select placeholder="选择RBAC角色" allowClear>
+              {roles.map(role => (
+                <Select.Option key={role.id} value={role.id}>
+                  {role.name} ({role.code})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            label="角色组"
+            name="role_group_ids"
+            help="选择角色组，控制用户可以访问的服务和命名空间"
+          >
+            <Select placeholder="选择角色组" mode="multiple" allowClear>
+              {roleGroups.map(rg => (
+                <Select.Option key={rg.id} value={rg.id}>
+                  {rg.name} ({rg.code})
+                </Select.Option>
+              ))}
             </Select>
           </Form.Item>
         </Form>

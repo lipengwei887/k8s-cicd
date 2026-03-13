@@ -1,0 +1,164 @@
+.stat-card {
+  border-radius: 16px !important;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.2);
+}
+
+.stat-card .ant-card-body {
+  padding: 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.stat-card__content {
+  position: relative;
+  z-index: 2;
+}
+
+.stat-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.stat-card__icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.stat-card:hover .stat-card__icon-wrapper {
+  transform: scale(1.1) rotate(5deg);
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.stat-card__icon {
+  font-size: 24px;
+  color: white;
+}
+
+.stat-card__trend {
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  color: white;
+}
+
+.stat-card__trend--up::before {
+  content: '↑ ';
+}
+
+.stat-card__trend--down::before {
+  content: '↓ ';
+}
+
+.stat-card__body {
+  color: white;
+}
+
+.stat-card__value {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.stat-card__title {
+  font-size: 14px;
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+/* 装饰性背景图案 */
+.stat-card__pattern {
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  transition: all 0.5s ease;
+}
+
+.stat-card:hover .stat-card__pattern {
+  transform: scale(1.2);
+  opacity: 0.8;
+}
+
+/* 骨架屏样式 */
+.stat-card--loading {
+  background: #f1f5f9 !important;
+}
+
+.stat-card__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+.skeleton--icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+
+.skeleton--title {
+  width: 60%;
+  height: 16px;
+}
+
+.skeleton--value {
+  width: 40%;
+  height: 36px;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .stat-card .ant-card-body {
+    padding: 16px;
+  }
+  
+  .stat-card__value {
+    font-size: 28px;
+  }
+  
+  .stat-card__icon-wrapper {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .stat-card__icon {
+    font-size: 20px;
+  }
+}

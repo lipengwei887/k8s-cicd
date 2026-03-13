@@ -11,6 +11,7 @@ import {
   Tag,
   Popconfirm,
   TreeSelect,
+  Divider,
 } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { userApi, clusterApi } from '@/api'
@@ -118,11 +119,43 @@ const PermissionManager: React.FC = () => {
 
   const handleCreate = async (values: any) => {
     try {
-      await userApi.addUserPermission(values.user_id, {
-        cluster_id: values.cluster_id,
-        namespace_id: values.namespace_id,
-        role: values.role,
-      })
+      // 处理多选的权限范围
+      const scopeIds: (string | number)[] = values.scope_ids || []
+      
+      // 为每个选中的范围创建权限
+      for (const scopeId of scopeIds) {
+        let clusterId: number | null = null
+        let namespaceId: number | null = null
+        
+        if (typeof scopeId === 'string' && scopeId.startsWith('cluster-')) {
+          // 选择的是集群
+          clusterId = parseInt(scopeId.replace('cluster-', ''))
+        } else {
+          // 选择的是命名空间
+          namespaceId = scopeId as number
+          // 找到命名空间对应的集群
+          const ns = namespaces.find(n => n.id === namespaceId)
+          if (ns) {
+            clusterId = ns.cluster_id
+          }
+        }
+        
+        await userApi.addUserPermission(values.user_id, {
+          cluster_id: clusterId,
+          namespace_id: namespaceId,
+          role: values.role,
+        })
+      }
+      
+      // 如果没有选择任何范围，则创建全局权限
+      if (scopeIds.length === 0) {
+        await userApi.addUserPermission(values.user_id, {
+          cluster_id: null,
+          namespace_id: null,
+          role: values.role,
+        })
+      }
+      
       message.success('权限添加成功')
       setModalVisible(false)
       form.resetFields()
@@ -254,13 +287,17 @@ const PermissionManager: React.FC = () => {
 
           <Form.Item
             label="权限范围"
-            name="namespace_id"
+            name="scope_ids"
           >
             <TreeSelect
               treeData={buildNamespaceTree()}
               placeholder="选择命名空间（不选则拥有全部权限）"
               allowClear
               treeDefaultExpandAll
+              multiple
+              treeCheckable
+              showCheckedStrategy={TreeSelect.SHOW_PARENT}
+              maxTagCount={3}
             />
           </Form.Item>
 

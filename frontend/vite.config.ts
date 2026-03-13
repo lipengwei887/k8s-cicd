@@ -12,13 +12,15 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      // WebSocket 代理 - 必须在 /api 之前，匹配发布进度 API
+      '/api/v1/releases': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-      },
-      '/ws': {
-        target: 'ws://localhost:8000',
-        ws: true,
       },
     },
   },
