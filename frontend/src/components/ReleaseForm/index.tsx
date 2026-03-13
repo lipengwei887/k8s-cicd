@@ -271,9 +271,14 @@ const ReleaseForm: React.FC = () => {
               placeholder="请选择服务"
               onChange={handleServiceChange}
               style={{ width: 400 }}
+              showSearch
+              optionFilterProp="label"
+              filterOption={(input, option) =>
+                String(option?.label || '').toLowerCase().includes(input.toLowerCase())
+              }
             >
               {services.map((service) => (
-                <Option key={service.id} value={service.id}>
+                <Option key={service.id} value={service.id} label={service.display_name || service.name}>
                   {service.display_name || service.name}
                 </Option>
               ))}

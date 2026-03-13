@@ -5,10 +5,14 @@ Harbor 镜像仓库服务
 import logging
 import requests
 import re
+import subprocess
+import json
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import quote
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -34,32 +38,38 @@ class HarborService:
             self.username = settings.HARBOR_USERNAME
             self.password = settings.HARBOR_PASSWORD
         
-        self.session = requests.Session()
-        
-        # 如果配置了认证信息，设置认证
-        if self.username and self.password:
-            self.session.auth = (self.username, self.password)
+        # 保存认证信息供 curl 使用
+        self.auth = (self.username, self.password) if self.username and self.password else None
     
     def _get(self, path: str, params: Optional[Dict] = None) -> Any:
         """
         发送 GET 请求到 Harbor API
-        
-        Args:
-            path: API 路径
-            params: 查询参数
-            
-        Returns:
-            响应数据
+        使用 curl 命令绕过 Python SSL 问题
         """
         url = f"{self.base_url}/api/v2.0{path}"
         logger.info(f"Harbor API request: {url}")
         
         try:
-            response = self.session.get(url, params=params, timeout=30)
-            logger.info(f"Harbor API response status: {response.status_code}")
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
+            # 构建 curl 命令
+            cmd = ['curl', '-k', '-s', '-u', f'{self.auth[0]}:{self.auth[1]}', url]
+            
+            # 添加查询参数
+            if params:
+                for key, value in params.items():
+                    cmd.append('-G')
+                    cmd.append('--data-urlencode')
+                    cmd.append(f'{key}={value}')
+            
+            # 执行 curl 命令
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                logger.error(f"curl failed: {result.stderr}")
+                raise Exception(f"curl failed: {result.stderr}")
+            
+            logger.info(f"Harbor API response: success")
+            return json.loads(result.stdout)
+        except Exception as e:
             logger.error(f"Harbor API request failed: {e}")
             raise
     
@@ -234,9 +244,8 @@ class HarborService:
         """
         try:
             # 尝试获取项目列表来测试连接
-            url = f"{self.base_url}/api/v2.0/projects"
-            response = self.session.get(url, timeout=10)
-            return response.status_code == 200
+            result = self._get("/projects")
+            return True
         except Exception as e:
             logger.error(f"Harbor connection test failed: {e}")
             return False
