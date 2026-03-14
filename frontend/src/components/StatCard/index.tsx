@@ -32,6 +32,7 @@ const gradientMap = {
 }
 
 // 数字滚动动画 - 简化版
+// @ts-expect-error 函数暂时未使用但保留
 const useCountUp = (end: number, duration: number = 1500) => {
   const [count, setCount] = useState(end)
   const rafRef = useRef<number>()

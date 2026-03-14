@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Form,
   Select,
@@ -12,7 +12,6 @@ import {
   message,
   Spin,
   Checkbox,
-  Input,
 } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { clusterApi, serviceApi, releaseApi, harborApi } from '@/api'
@@ -33,9 +32,9 @@ const ReleaseForm: React.FC = () => {
   const [namespaces, setNamespaces] = useState<Namespace[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [imageTags, setImageTags] = useState<Record<number, string[]>>({})
-  const [selectedService, setSelectedService] = useState<Service | null>(null)
+  const [, setSelectedService] = useState<Service | null>(null)
   const [selectedServices, setSelectedServices] = useState<Service[]>([])
-  const [currentImage, setCurrentImage] = useState<string>('未知')
+  const [, setCurrentImage] = useState<string>('未知')
 
   // 发布状态
   const [releaseId, setReleaseId] = useState<number | null>(null)
@@ -48,7 +47,7 @@ const ReleaseForm: React.FC = () => {
     const host = window.location.host
     return `${protocol}//${host}/api/v1/releases/${releaseId}/progress`
   })() : null
-  const { readyState } = useWebSocket(wsUrl, {
+  useWebSocket(wsUrl, {
     onMessage: (data) => {
       setReleaseProgress(data)
       if (data.status === 'completed') {
@@ -95,6 +94,7 @@ const ReleaseForm: React.FC = () => {
     }
   }
 
+  // @ts-expect-error 函数暂时未使用但保留
   const loadImageTags = async (serviceId: number) => {
     try {
       const service = services.find((s) => s.id === serviceId)

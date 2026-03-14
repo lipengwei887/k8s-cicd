@@ -164,9 +164,9 @@ CREATE TABLE audit_logs (
     PRIMARY KEY (id)
 );
 
--- 插入默认管理员用户 (密码: admin123)
+-- 插入默认管理员用户 (密码: Pass#1234)
 INSERT INTO users (username, password_hash, email, real_name, `role`, status, is_superuser) VALUES
-('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/I5q', 'admin@example.com', '管理员', 'ADMIN', 1, 1);
+('lipengwei', '$2b$12$hIAuN2qP.s.wEvjZAyuWceDAFyOJgYHkX0NNumnBoqLXiCmBKwSx2', 'lipengwei@example.com', '管理员', 'ADMIN', 1, 1);
 
 -- 插入默认角色
 INSERT INTO roles (name, code, description, role_type, status) VALUES

@@ -1,5 +1,4 @@
-import React from 'react'
-import { Layout, Menu, Card, Button } from 'antd'
+import { Layout, Menu, Button } from 'antd'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import {
   ClusterOutlined,

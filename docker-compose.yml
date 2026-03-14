@@ -4,6 +4,7 @@ services:
   mysql:
     image: mysql:8.0
     container_name: k8s-platform-mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
       MYSQL_DATABASE: k8s_platform
@@ -11,50 +12,92 @@ services:
       MYSQL_COLLATION: utf8mb4_unicode_ci
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "3306:3306"
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=200
+      --innodb_buffer_pool_size=256M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 10s
       timeout: 20s
       retries: 10
+      start_period: 30s
+    networks:
+      - k8s-platform-network
 
   redis:
     image: redis:7-alpine
     container_name: k8s-platform-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - k8s-platform-network
 
   backend:
     build: ./backend
     container_name: k8s-platform-backend
+    restart: unless-stopped
     environment:
       - DATABASE_URL=mysql+aiomysql://root:rootpass@mysql:3306/k8s_platform
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=your-secret-key-change-in-production
-      - JWT_SECRET=jwt-secret-key
+      - JWT_SECRET=jwt-secret-key-change-in-production
       - DEBUG=false
+      - HARBOR_URL=https://harbor.example.com
+      - HARBOR_USERNAME=admin
+      - HARBOR_PASSWORD=password
+      - ENCRYPTION_KEY=
     ports:
       - "8000:8000"
     depends_on:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      - ./kubeconfig.yaml:/app/kubeconfig.yaml:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/clusters"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - k8s-platform-network
 
   frontend:
     build: ./frontend
     container_name: k8s-platform-frontend
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       - backend
+    networks:
+      - k8s-platform-network
 
 volumes:
   mysql_data:
+    driver: local
   redis_data:
+    driver: local
+
+networks:
+  k8s-platform-network:
+    driver: bridge

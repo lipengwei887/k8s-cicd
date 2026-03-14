@@ -5,16 +5,20 @@ Harbor 镜像仓库服务
 import logging
 import requests
 import re
-import subprocess
+import ssl
+import urllib3
+import http.client
 import json
+import base64
 from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class HarborService:
@@ -37,38 +41,61 @@ class HarborService:
         else:
             self.username = settings.HARBOR_USERNAME
             self.password = settings.HARBOR_PASSWORD
-        
-        # 保存认证信息供 curl 使用
-        self.auth = (self.username, self.password) if self.username and self.password else None
     
-    def _get(self, path: str, params: Optional[Dict] = None) -> Any:
+    def _get(self, path: str, params: Optional[Dict] = None, use_http: bool = False) -> Any:
         """
         发送 GET 请求到 Harbor API
-        使用 curl 命令绕过 Python SSL 问题
+        使用 http.client 绕过 requests 库的兼容性问题
         """
-        url = f"{self.base_url}/api/v2.0{path}"
-        logger.info(f"Harbor API request: {url}")
+        # 根据 use_http 参数选择协议
+        base_url = self.base_url
+        if use_http and base_url.startswith('https://'):
+            base_url = base_url.replace('https://', 'http://', 1)
+        
+        # 解析 URL
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        
+        # 构建路径和查询参数
+        full_path = f"/api/v2.0{path}"
+        if params:
+            full_path += "?" + urlencode(params)
+        
+        logger.info(f"Harbor API request: {base_url}{full_path}")
         
         try:
-            # 构建 curl 命令
-            cmd = ['curl', '-k', '-s', '-u', f'{self.auth[0]}:{self.auth[1]}', url]
+            # 使用 http.client 发送请求
+            if parsed.scheme == 'https':
+                conn = http.client.HTTPSConnection(host, port, timeout=30)
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=30)
             
-            # 添加查询参数
-            if params:
-                for key, value in params.items():
-                    cmd.append('-G')
-                    cmd.append('--data-urlencode')
-                    cmd.append(f'{key}={value}')
+            # 构建请求头
+            headers = {'Host': host}
+            if self.username and self.password:
+                auth_str = base64.b64encode(f"{self.username}:{self.password}".encode()).decode()
+                headers['Authorization'] = f'Basic {auth_str}'
             
-            # 执行 curl 命令
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            conn.request('GET', full_path, headers=headers)
+            response = conn.getresponse()
             
-            if result.returncode != 0:
-                logger.error(f"curl failed: {result.stderr}")
-                raise Exception(f"curl failed: {result.stderr}")
+            status = response.status
+            data = response.read().decode('utf-8')
+            conn.close()
             
-            logger.info(f"Harbor API response: success")
-            return json.loads(result.stdout)
+            if status >= 400:
+                raise Exception(f"HTTP {status}: {data}")
+            
+            return json.loads(data)
+            
+        except ssl.SSLError as e:
+            if not use_http and parsed.scheme == 'https':
+                logger.warning(f"HTTPS request failed, retrying with HTTP: {e}")
+                return self._get(path, params, use_http=True)
+            logger.error(f"Harbor API request failed: {e}")
+            raise
         except Exception as e:
             logger.error(f"Harbor API request failed: {e}")
             raise

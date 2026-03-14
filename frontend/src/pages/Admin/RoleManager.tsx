@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Card,
   Table,
@@ -7,7 +7,6 @@ import {
   Modal,
   Form,
   Input,
-  Select,
   Switch,
   message,
   Popconfirm,
@@ -26,7 +25,6 @@ import { getRoles, getRole, createRole, updateRole, deleteRole, getPermissions }
 import type { ColumnsType } from 'antd/es/table'
 
 const { TextArea } = Input
-const { Option } = Select
 
 interface Role {
   id: number
@@ -50,7 +48,8 @@ interface Permission {
 
 const RoleManager: React.FC = () => {
   const [roles, setRoles] = useState<Role[]>([])
-  const [permissions, setPermissions] = useState<Permission[]>([])
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [, setPermissions] = useState<Permission[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [modalTitle, setModalTitle] = useState('新增角色')

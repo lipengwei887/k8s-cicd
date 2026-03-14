@@ -9,7 +9,7 @@ redis==5.0.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-pydantic==2.5.0
+pydantic[email]==2.5.0
 pydantic-settings==2.1.0
 websockets==12.0
 httpx==0.25.2
@@ -17,3 +17,4 @@ python-dotenv==1.0.0
 aiomysql==0.2.0
 aioredis==2.0.1
 celery==5.3.4
+email-validator==2.1.0

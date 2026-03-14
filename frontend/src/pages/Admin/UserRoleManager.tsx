@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Card,
   Table,
   Button,
   Space,
   Modal,
-  Select,
   message,
   Tag,
   Descriptions,
@@ -25,7 +24,7 @@ import {
 } from '../../api/rbac'
 import type { ColumnsType } from 'antd/es/table'
 
-const { Option } = Select
+
 
 interface User {
   id: number
