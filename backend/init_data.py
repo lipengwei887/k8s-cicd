@@ -104,11 +104,11 @@ async def create_test_data(db: AsyncSession):
     """创建测试数据"""
     # 创建集群
     cluster = Cluster(
-        name="fushang",
-        display_name="富尚集群",
+        name="test",
+        display_name="临时测试集群",
         api_server="https://kubernetes.default.svc",
         status=1,
-        description="生产环境集群"
+        description="测试环境集群"
     )
     db.add(cluster)
     await db.commit()
