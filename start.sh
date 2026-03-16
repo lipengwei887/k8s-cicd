@@ -77,15 +77,17 @@ start_backend() {
     nohup venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 > "$BACKEND_LOG" 2>&1 &
     
     # 等待后端启动
-    sleep 3
+    echo -e "${YELLOW}等待后端服务就绪...${NC}"
+    for i in {1..30}; do
+        if curl -s http://localhost:8000/api/v1/clusters >/dev/null 2>&1; then
+            echo -e "${GREEN}后端服务已启动: http://localhost:8000${NC}"
+            return
+        fi
+        sleep 1
+    done
     
-    # 检查是否启动成功
-    if curl -s http://localhost:8000/api/v1/clusters >/dev/null 2>&1; then
-        echo -e "${GREEN}后端服务已启动: http://localhost:8000${NC}"
-    else
-        echo -e "${RED}后端服务启动失败，请检查日志: $BACKEND_LOG${NC}"
-        exit 1
-    fi
+    echo -e "${RED}后端服务启动超时，请检查日志: $BACKEND_LOG${NC}"
+    exit 1
 }
 
 # 停止后端

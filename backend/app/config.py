@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     
     # 数据库配置
-    DATABASE_URL: str = "mysql+aiomysql://root:rootpass@localhost:3306/k8s_platform"
+    DATABASE_URL: str = "mysql+aiomysql://root:rootpass@localhost:3306/k8s_platform?charset=utf8mb4"
     
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"

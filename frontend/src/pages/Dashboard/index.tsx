@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Button, Table, Space, Avatar, Dropdown, Tag, message, Modal, Descriptions } from 'antd'
+import { Card, Row, Col, Button, Table, Space, Avatar, Dropdown, Tag, message, Modal, Descriptions, Progress, Spin } from 'antd'
 import { PlusOutlined, ReloadOutlined, SettingOutlined, UserOutlined, LogoutOutlined, CheckOutlined, CloseOutlined, PlayCircleOutlined, RollbackOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { releaseApi, clusterApi, serviceApi, authApi, userApi, harborApi } from '@/api'
 import StatCard from '@/components/StatCard'
 import StatusBadge from '@/components/StatusBadge'
+import useWebSocket from '@/hooks/useWebSocket'
 import '@/styles/design-system.css'
 
 const Dashboard: React.FC = () => {
@@ -26,6 +27,7 @@ const Dashboard: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [detailModalVisible, setDetailModalVisible] = useState(false)
   const [selectedRelease, setSelectedRelease] = useState<any>(null)
+  const [releaseProgress, setReleaseProgress] = useState<any>(null)
   
   // 再次发布弹窗状态
   const [reexecuteModalVisible, setReexecuteModalVisible] = useState(false)
@@ -33,6 +35,30 @@ const Dashboard: React.FC = () => {
   const [reexecuteImageTag, setReexecuteImageTag] = useState('')
   const [availableTags, setAvailableTags] = useState<string[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
+
+  // WebSocket 连接 - 用于实时监听发布进度
+  const wsUrl = selectedRelease?.id ? (() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    return `${protocol}//${host}/api/v1/releases/${selectedRelease.id}/progress`
+  })() : null
+  
+  useWebSocket(wsUrl, {
+    onMessage: (data) => {
+      setReleaseProgress(data)
+      if (data.status === 'completed') {
+        message.success('发布成功！')
+        // 更新 selectedRelease 状态为成功
+        setSelectedRelease((prev: any) => prev ? { ...prev, status: 'success' } : prev)
+        loadReleases(pagination.current, pagination.pageSize)
+      } else if (data.status === 'failed') {
+        message.error(`发布失败: ${data.message}`)
+        // 更新 selectedRelease 状态为失败
+        setSelectedRelease((prev: any) => prev ? { ...prev, status: 'failed' } : prev)
+        loadReleases(pagination.current, pagination.pageSize)
+      }
+    },
+  })
 
   useEffect(() => {
     loadCurrentUser()
@@ -198,12 +224,20 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const handleApprove = async (id: number, approved: boolean) => {
+  const handleApprove = async (record: any, approved: boolean) => {
     try {
-      await releaseApi.approveRelease(id, { approved, comment: approved ? 'Approved' : 'Rejected' })
+      await releaseApi.approveRelease(record.id, { approved, comment: approved ? 'Approved' : 'Rejected' })
+      if (approved) {
+        message.success('审批通过，正在打开发布进度...')
+        // 打开详情弹窗并启动 WebSocket 监听进度
+        setSelectedRelease(record)
+        setReleaseProgress(null)
+        setDetailModalVisible(true)
+      }
       loadReleases(pagination.current, pagination.pageSize)
     } catch (error) {
       console.error('审批失败', error)
+      message.error('审批失败')
     }
   }
 
@@ -273,12 +307,17 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const handleExecute = async (id: number) => {
+  const handleExecute = async (record: any) => {
     try {
-      await releaseApi.executeRelease(id)
-      loadReleases(pagination.current, pagination.pageSize)
+      await releaseApi.executeRelease(record.id)
+      message.success('发布已开始，正在打开详情查看进度...')
+      // 打开详情弹窗并启动 WebSocket 监听进度
+      setSelectedRelease(record)
+      setReleaseProgress(null)
+      setDetailModalVisible(true)
     } catch (error) {
       console.error('执行发布失败', error)
+      message.error('执行发布失败')
     }
   }
 
@@ -372,7 +411,7 @@ const Dashboard: React.FC = () => {
                 size="small"
                 type="primary"
                 icon={<CheckOutlined />}
-                onClick={() => handleApprove(record.id, true)}
+                onClick={() => handleApprove(record, true)}
               >
                 通过
               </Button>
@@ -380,7 +419,7 @@ const Dashboard: React.FC = () => {
                 size="small"
                 danger
                 icon={<CloseOutlined />}
-                onClick={() => handleApprove(record.id, false)}
+                onClick={() => handleApprove(record, false)}
               >
                 拒绝
               </Button>
@@ -391,7 +430,7 @@ const Dashboard: React.FC = () => {
               size="small"
               type="primary"
               icon={<PlayCircleOutlined />}
-              onClick={() => handleExecute(record.id)}
+              onClick={() => handleExecute(record)}
             >
               执行发布
             </Button>
@@ -550,6 +589,29 @@ const Dashboard: React.FC = () => {
                 </Descriptions.Item>
               )}
             </Descriptions>
+
+            {/* 实时发布进度 */}
+            {releaseProgress && (
+              <div style={{ marginBottom: 16 }}>
+                <h4>发布进度</h4>
+                <Card>
+                  <Progress 
+                    percent={Math.round(releaseProgress.progress_percent || 0)} 
+                    status={releaseProgress.status === 'failed' ? 'exception' : 'active'}
+                  />
+                  <Descriptions size="small" column={2}>
+                    <Descriptions.Item label="期望副本">{releaseProgress.desired || 0}</Descriptions.Item>
+                    <Descriptions.Item label="已更新">{releaseProgress.updated || 0}</Descriptions.Item>
+                    <Descriptions.Item label="就绪">{releaseProgress.ready || 0}</Descriptions.Item>
+                    <Descriptions.Item label="不可用">{releaseProgress.unavailable || 0}</Descriptions.Item>
+                    <Descriptions.Item label="耗时">{releaseProgress.elapsed_seconds || 0}s</Descriptions.Item>
+                  </Descriptions>
+                  {releaseProgress.status === 'running' && (
+                    <Spin tip="正在发布，请稍候..." style={{ marginTop: 16 }} />
+                  )}
+                </Card>
+              </div>
+            )}
 
             {selectedRelease.message && (
               <div style={{ marginBottom: 16 }}>

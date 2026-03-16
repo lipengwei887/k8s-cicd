@@ -1,8 +1,9 @@
 -- K8s 发版平台数据库初始化脚本
--- 执行前请确保已创建数据库: CREATE DATABASE k8s_release DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 此脚本仅在 MySQL 首次启动时执行，用于创建表结构
+-- 数据初始化请使用 backend/init_data.py
 
 -- 用户表
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id INTEGER NOT NULL AUTO_INCREMENT,
     username VARCHAR(64) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
@@ -13,13 +14,15 @@ CREATE TABLE users (
     last_login_at DATETIME,
     created_at TIMESTAMP NULL DEFAULT (now()),
     updated_at TIMESTAMP NULL DEFAULT (now()),
-    is_superuser BOOL,
+    is_superuser BOOL DEFAULT FALSE,
+    org_id INTEGER NULL,
+    mfa_enabled BOOL DEFAULT FALSE,
     PRIMARY KEY (id),
     UNIQUE (email)
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 集群表
-CREATE TABLE clusters (
+CREATE TABLE IF NOT EXISTS clusters (
     id INTEGER NOT NULL AUTO_INCREMENT,
     name VARCHAR(64) NOT NULL,
     display_name VARCHAR(128),
@@ -31,11 +34,12 @@ CREATE TABLE clusters (
     description VARCHAR(255),
     created_at TIMESTAMP NULL DEFAULT (now()),
     updated_at TIMESTAMP NULL DEFAULT (now()),
-    PRIMARY KEY (id)
-);
+    PRIMARY KEY (id),
+    UNIQUE KEY ix_clusters_name (name)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 命名空间表
-CREATE TABLE namespaces (
+CREATE TABLE IF NOT EXISTS namespaces (
     id INTEGER NOT NULL AUTO_INCREMENT,
     cluster_id INTEGER NOT NULL,
     name VARCHAR(64) NOT NULL,
@@ -47,10 +51,10 @@ CREATE TABLE namespaces (
     updated_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id),
     FOREIGN KEY(cluster_id) REFERENCES clusters (id) ON DELETE CASCADE
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 服务表
-CREATE TABLE services (
+CREATE TABLE IF NOT EXISTS services (
     id INTEGER NOT NULL AUTO_INCREMENT,
     namespace_id INTEGER NOT NULL,
     name VARCHAR(64) NOT NULL,
@@ -71,10 +75,10 @@ CREATE TABLE services (
     updated_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id),
     FOREIGN KEY(namespace_id) REFERENCES namespaces (id) ON DELETE CASCADE
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 发布记录表
-CREATE TABLE release_records (
+CREATE TABLE IF NOT EXISTS release_records (
     id INTEGER NOT NULL AUTO_INCREMENT,
     service_id INTEGER NOT NULL,
     operator_id INTEGER NOT NULL,
@@ -103,10 +107,10 @@ CREATE TABLE release_records (
     FOREIGN KEY(rollback_to) REFERENCES release_records (id),
     FOREIGN KEY(approved_by) REFERENCES users (id),
     FOREIGN KEY(parent_release_id) REFERENCES release_records (id)
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 角色表
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
     id INTEGER NOT NULL AUTO_INCREMENT,
     name VARCHAR(64) NOT NULL,
     code VARCHAR(64) NOT NULL,
@@ -117,10 +121,10 @@ CREATE TABLE roles (
     updated_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id),
     UNIQUE (code)
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 角色组表
-CREATE TABLE role_groups (
+CREATE TABLE IF NOT EXISTS role_groups (
     id INTEGER NOT NULL AUTO_INCREMENT,
     name VARCHAR(64) NOT NULL,
     code VARCHAR(64) NOT NULL,
@@ -132,10 +136,10 @@ CREATE TABLE role_groups (
     PRIMARY KEY (id),
     UNIQUE (code),
     FOREIGN KEY(parent_id) REFERENCES role_groups (id) ON DELETE SET NULL
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 权限表
-CREATE TABLE permissions (
+CREATE TABLE IF NOT EXISTS permissions (
     id INTEGER NOT NULL AUTO_INCREMENT,
     user_id INTEGER NOT NULL,
     cluster_id INTEGER,
@@ -146,10 +150,10 @@ CREATE TABLE permissions (
     FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE,
     FOREIGN KEY(cluster_id) REFERENCES clusters (id) ON DELETE CASCADE,
     FOREIGN KEY(namespace_id) REFERENCES namespaces (id) ON DELETE CASCADE
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 审计日志表
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER NOT NULL AUTO_INCREMENT,
     user_id INTEGER,
     username VARCHAR(64),
@@ -162,16 +166,4 @@ CREATE TABLE audit_logs (
     user_agent VARCHAR(255),
     created_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id)
-);
-
--- 插入默认管理员用户 (密码: Pass#1234)
-INSERT INTO users (username, password_hash, email, real_name, `role`, status, is_superuser) VALUES
-('lipengwei', '$2b$12$hIAuN2qP.s.wEvjZAyuWceDAFyOJgYHkX0NNumnBoqLXiCmBKwSx2', 'lipengwei@example.com', '管理员', 'ADMIN', 1, 1);
-
--- 插入默认角色
-INSERT INTO roles (name, code, description, role_type, status) VALUES
-('超级管理员', 'superadmin', '系统超级管理员', 'SYSTEM', 1),
-('管理员', 'admin', '系统管理员', 'SYSTEM', 1),
-('开发者', 'developer', '开发人员', 'SYSTEM', 1),
-('审批者', 'approver', '发布审批人员', 'SYSTEM', 1),
-('观察者', 'viewer', '只读用户', 'SYSTEM', 1);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
