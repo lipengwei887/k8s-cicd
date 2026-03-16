@@ -2,15 +2,30 @@
 -- 此脚本仅在 MySQL 首次启动时执行，用于创建表结构
 -- 数据初始化请使用 backend/init_data.py
 
+-- 组织表
+CREATE TABLE IF NOT EXISTS organizations (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    name VARCHAR(64) NOT NULL,
+    code VARCHAR(64) NOT NULL,
+    description TEXT,
+    parent_id INTEGER,
+    status INTEGER DEFAULT 1,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    updated_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    UNIQUE (code),
+    FOREIGN KEY(parent_id) REFERENCES organizations (id) ON DELETE SET NULL
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 用户表
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER NOT NULL AUTO_INCREMENT,
     username VARCHAR(64) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255),
     email VARCHAR(128) NOT NULL,
     real_name VARCHAR(64),
     `role` ENUM('ADMIN','DEVELOPER','VIEWER','APPROVER'),
-    status INTEGER,
+    status INTEGER DEFAULT 1,
     last_login_at DATETIME,
     created_at TIMESTAMP NULL DEFAULT (now()),
     updated_at TIMESTAMP NULL DEFAULT (now()),
@@ -18,7 +33,9 @@ CREATE TABLE IF NOT EXISTS users (
     org_id INTEGER NULL,
     mfa_enabled BOOL DEFAULT FALSE,
     PRIMARY KEY (id),
-    UNIQUE (email)
+    UNIQUE (username),
+    UNIQUE (email),
+    FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE SET NULL
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 集群表
@@ -116,11 +133,54 @@ CREATE TABLE IF NOT EXISTS roles (
     code VARCHAR(64) NOT NULL,
     description TEXT,
     role_type ENUM('SYSTEM','CUSTOM'),
-    status INTEGER,
+    status INTEGER DEFAULT 1,
     created_at TIMESTAMP NULL DEFAULT (now()),
     updated_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id),
     UNIQUE (code)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 用户角色关联表
+CREATE TABLE IF NOT EXISTS user_roles (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    user_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    valid_from TIMESTAMP NULL,
+    valid_until TIMESTAMP NULL,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE,
+    UNIQUE KEY uix_user_role (user_id, role_id)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- RBAC 权限表
+CREATE TABLE IF NOT EXISTS rbac_permissions (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    name VARCHAR(64) NOT NULL,
+    code VARCHAR(128) NOT NULL,
+    permission_type VARCHAR(32) DEFAULT 'api',
+    resource_type VARCHAR(32),
+    `action` VARCHAR(32),
+    parent_id INTEGER,
+    status INTEGER DEFAULT 1,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    UNIQUE (code),
+    FOREIGN KEY(parent_id) REFERENCES rbac_permissions (id) ON DELETE SET NULL
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 角色权限关联表
+CREATE TABLE IF NOT EXISTS role_permissions (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    role_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    scope_type VARCHAR(32) DEFAULT 'all',
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE,
+    FOREIGN KEY(permission_id) REFERENCES rbac_permissions (id) ON DELETE CASCADE,
+    UNIQUE KEY uix_role_permission (role_id, permission_id)
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 角色组表
@@ -130,12 +190,48 @@ CREATE TABLE IF NOT EXISTS role_groups (
     code VARCHAR(64) NOT NULL,
     description TEXT,
     parent_id INTEGER,
-    status INTEGER,
+    status INTEGER DEFAULT 1,
     created_at TIMESTAMP NULL DEFAULT (now()),
     updated_at TIMESTAMP NULL DEFAULT (now()),
     PRIMARY KEY (id),
     UNIQUE (code),
     FOREIGN KEY(parent_id) REFERENCES role_groups (id) ON DELETE SET NULL
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 用户与角色组关联表
+CREATE TABLE IF NOT EXISTS user_role_groups (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    user_id INTEGER NOT NULL,
+    role_group_id INTEGER NOT NULL,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY(role_group_id) REFERENCES role_groups (id) ON DELETE CASCADE,
+    UNIQUE KEY uix_user_role_group (user_id, role_group_id)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 角色组与服务关联表（数据权限）
+CREATE TABLE IF NOT EXISTS role_group_services (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    role_group_id INTEGER NOT NULL,
+    service_id INTEGER NOT NULL,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    FOREIGN KEY(role_group_id) REFERENCES role_groups (id) ON DELETE CASCADE,
+    FOREIGN KEY(service_id) REFERENCES services (id) ON DELETE CASCADE,
+    UNIQUE KEY uix_role_group_service (role_group_id, service_id)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 角色组与命名空间关联表（数据权限）
+CREATE TABLE IF NOT EXISTS role_group_namespaces (
+    id INTEGER NOT NULL AUTO_INCREMENT,
+    role_group_id INTEGER NOT NULL,
+    namespace_id INTEGER NOT NULL,
+    created_at TIMESTAMP NULL DEFAULT (now()),
+    PRIMARY KEY (id),
+    FOREIGN KEY(role_group_id) REFERENCES role_groups (id) ON DELETE CASCADE,
+    FOREIGN KEY(namespace_id) REFERENCES namespaces (id) ON DELETE CASCADE,
+    UNIQUE KEY uix_role_group_namespace (role_group_id, namespace_id)
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 权限表
