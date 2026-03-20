@@ -3,7 +3,6 @@ from app.models.cluster import Cluster
 from app.models.namespace import Namespace
 from app.models.service import Service
 from app.models.release import ReleaseRecord
-from app.models.permission import Permission
 from app.models.audit import AuditLog
 from app.models.role import (
     Role, RoleGroup, UserRole, RBACPermission, 
@@ -17,7 +16,6 @@ __all__ = [
     "Namespace",
     "Service",
     "ReleaseRecord",
-    "Permission",
     "AuditLog",
     "Role",
     "RoleGroup",

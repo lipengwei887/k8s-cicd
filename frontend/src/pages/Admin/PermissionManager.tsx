@@ -9,10 +9,10 @@ import {
   message,
   Tag,
   Popconfirm,
-  TreeSelect,
 } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
-import { userApi, clusterApi } from '@/api'
+import { userApi } from '@/api'
+import { getRoles, getUserRoles, assignRoleToUser, removeRoleFromUser } from '@/api/rbac'
 
 interface User {
   id: number
@@ -21,35 +21,26 @@ interface User {
   role: string
 }
 
-interface Cluster {
+interface Role {
   id: number
   name: string
-  display_name: string
+  code: string
+  role_type: string
 }
 
-interface Namespace {
-  id: number
-  name: string
-  display_name: string
-  cluster_id: number
-}
-
-interface Permission {
-  id: number
+interface UserRoleItem {
   user_id: number
-  cluster_id?: number
-  namespace_id?: number
-  role: string
-  username?: string
-  cluster_name?: string
-  namespace_name?: string
+  username: string
+  role_id: number
+  role_name: string
+  role_code: string
+  role_type: string
 }
 
 const PermissionManager: React.FC = () => {
   const [users, setUsers] = useState<User[]>([])
-  const [clusters, setClusters] = useState<Cluster[]>([])
-  const [namespaces, setNamespaces] = useState<Namespace[]>([])
-  const [permissions, setPermissions] = useState<Permission[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [userRoles, setUserRoles] = useState<UserRoleItem[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [form] = Form.useForm()
@@ -63,31 +54,15 @@ const PermissionManager: React.FC = () => {
     try {
       // 加载用户列表
       const usersRes: any = await userApi.getUsers()
-      setUsers(usersRes.items || [])
+      const userList = usersRes.items || []
+      setUsers(userList)
 
-      // 加载集群列表
-      const clustersRes: any = await clusterApi.getClusters()
-      setClusters(clustersRes.items || [])
+      // 加载角色列表
+      const rolesRes: any = await getRoles()
+      setRoles(rolesRes.items || [])
 
-      // 加载所有命名空间
-      const allNamespaces: Namespace[] = []
-      for (const cluster of clustersRes.items || []) {
-        try {
-          const nsRes: any = await clusterApi.getNamespaces(cluster.id)
-          for (const ns of nsRes.items || []) {
-            allNamespaces.push({
-              ...ns,
-              cluster_id: cluster.id,
-            })
-          }
-        } catch (e) {
-          console.error(`Failed to load namespaces for cluster ${cluster.id}`)
-        }
-      }
-      setNamespaces(allNamespaces)
-
-      // 加载所有用户的权限
-      await loadAllPermissions(usersRes.items || [])
+      // 加载所有用户的角色
+      await loadAllUserRoles(userList)
     } catch (error) {
       message.error('加载数据失败')
     } finally {
@@ -95,171 +70,118 @@ const PermissionManager: React.FC = () => {
     }
   }
 
-  const loadAllPermissions = async (userList: User[]) => {
-    const allPermissions: Permission[] = []
+  const loadAllUserRoles = async (userList: User[]) => {
+    const allUserRoles: UserRoleItem[] = []
     for (const user of userList) {
       try {
-        const res: any = await userApi.getUserPermissions(user.id)
-        for (const perm of res.items || []) {
-          allPermissions.push({
-            ...perm,
+        const res: any = await getUserRoles(user.id)
+        for (const role of res.items || []) {
+          allUserRoles.push({
+            user_id: user.id,
             username: user.username,
-            cluster_name: clusters.find(c => c.id === perm.cluster_id)?.display_name,
-            namespace_name: namespaces.find(n => n.id === perm.namespace_id)?.display_name,
+            role_id: role.id,
+            role_name: role.name,
+            role_code: role.code,
+            role_type: role.role_type,
           })
         }
       } catch (e) {
-        console.error(`Failed to load permissions for user ${user.id}`)
+        console.error(`Failed to load roles for user ${user.id}`)
       }
     }
-    setPermissions(allPermissions)
+    setUserRoles(allUserRoles)
   }
 
-  const handleCreate = async (values: any) => {
+  const handleAssignRole = async (values: any) => {
     try {
-      // 处理多选的权限范围
-      const scopeIds: (string | number)[] = values.scope_ids || []
+      await assignRoleToUser({
+        user_id: values.user_id,
+        role_id: values.role_id,
+      })
       
-      // 为每个选中的范围创建权限
-      for (const scopeId of scopeIds) {
-        let clusterId: number | null = null
-        let namespaceId: number | null = null
-        
-        if (typeof scopeId === 'string' && scopeId.startsWith('cluster-')) {
-          // 选择的是集群
-          clusterId = parseInt(scopeId.replace('cluster-', ''))
-        } else {
-          // 选择的是命名空间
-          namespaceId = scopeId as number
-          // 找到命名空间对应的集群
-          const ns = namespaces.find(n => n.id === namespaceId)
-          if (ns) {
-            clusterId = ns.cluster_id
-          }
-        }
-        
-        await userApi.addUserPermission(values.user_id, {
-          cluster_id: clusterId,
-          namespace_id: namespaceId,
-          role: values.role,
-        })
-      }
-      
-      // 如果没有选择任何范围，则创建全局权限
-      if (scopeIds.length === 0) {
-        await userApi.addUserPermission(values.user_id, {
-          cluster_id: null,
-          namespace_id: null,
-          role: values.role,
-        })
-      }
-      
-      message.success('权限添加成功')
+      message.success('角色分配成功')
       setModalVisible(false)
       form.resetFields()
       loadData()
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '添加失败')
+      message.error(error.response?.data?.detail || '分配失败')
     }
   }
 
-  const handleDelete = async (userId: number, permissionId: number) => {
+  const handleRemoveRole = async (userId: number, roleId: number) => {
     try {
-      await userApi.removeUserPermission(userId, permissionId)
-      message.success('权限删除成功')
+      await removeRoleFromUser(userId, roleId)
+      message.success('角色移除成功')
       loadData()
     } catch (error) {
-      message.error('删除失败')
+      message.error('移除失败')
     }
   }
 
-  const getRoleTag = (role: string) => {
-    const roleMap: Record<string, { color: string; text: string }> = {
-      admin: { color: 'red', text: '管理员' },
-      operator: { color: 'blue', text: '操作员' },
-      viewer: { color: 'green', text: '只读' },
+  const getRoleTypeTag = (roleType: string) => {
+    const typeMap: Record<string, { color: string; text: string }> = {
+      system: { color: 'red', text: '系统' },
+      custom: { color: 'blue', text: '自定义' },
     }
-    const { color, text } = roleMap[role] || { color: 'default', text: role }
+    const { color, text } = typeMap[roleType] || { color: 'default', text: roleType }
     return <Tag color={color}>{text}</Tag>
   }
 
   const columns = [
     {
-      title: 'ID',
-      dataIndex: 'id',
-      width: 80,
-    },
-    {
       title: '用户',
       dataIndex: 'username',
     },
     {
-      title: '集群',
-      dataIndex: 'cluster_name',
-      render: (text: string) => text || '全部集群',
+      title: '角色名称',
+      dataIndex: 'role_name',
     },
     {
-      title: '命名空间',
-      dataIndex: 'namespace_name',
-      render: (text: string) => text || '全部命名空间',
+      title: '角色编码',
+      dataIndex: 'role_code',
     },
     {
-      title: '权限角色',
-      dataIndex: 'role',
-      render: (role: string) => getRoleTag(role),
+      title: '角色类型',
+      dataIndex: 'role_type',
+      render: (type: string) => getRoleTypeTag(type),
     },
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: Permission) => (
+      render: (_: any, record: UserRoleItem) => (
         <Popconfirm
-          title="确定删除该权限吗？"
-          onConfirm={() => handleDelete(record.user_id, record.id)}
+          title="确定移除该角色吗？"
+          onConfirm={() => handleRemoveRole(record.user_id, record.role_id)}
         >
           <Button size="small" danger icon={<DeleteOutlined />}>
-            删除
+            移除
           </Button>
         </Popconfirm>
       ),
     },
   ]
 
-  // 构建命名空间树形数据
-  const buildNamespaceTree = () => {
-    return clusters.map(cluster => ({
-      title: cluster.display_name,
-      value: `cluster-${cluster.id}`,
-      selectable: false,
-      children: namespaces
-        .filter(ns => ns.cluster_id === cluster.id)
-        .map(ns => ({
-          title: ns.display_name,
-          value: ns.id,
-        })),
-    }))
-  }
-
   return (
     <div>
       <Card
-        title="权限管理"
+        title="用户角色管理 (RBAC)"
         extra={
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>
-            添加权限
+            分配角色
           </Button>
         }
       >
         <Table
           columns={columns}
-          dataSource={permissions}
-          rowKey="id"
+          dataSource={userRoles}
+          rowKey={(record) => `${record.user_id}-${record.role_id}`}
           loading={loading}
         />
       </Card>
 
-      {/* 添加权限弹窗 */}
+      {/* 分配角色弹窗 */}
       <Modal
-        title="添加权限"
+        title="分配角色"
         open={modalVisible}
         onCancel={() => {
           setModalVisible(false)
@@ -268,7 +190,7 @@ const PermissionManager: React.FC = () => {
         onOk={() => form.submit()}
         width={500}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
+        <Form form={form} layout="vertical" onFinish={handleAssignRole}>
           <Form.Item
             label="选择用户"
             name="user_id"
@@ -284,31 +206,16 @@ const PermissionManager: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            label="权限范围"
-            name="scope_ids"
+            label="选择角色"
+            name="role_id"
+            rules={[{ required: true, message: '请选择角色' }]}
           >
-            <TreeSelect
-              treeData={buildNamespaceTree()}
-              placeholder="选择命名空间（不选则拥有全部权限）"
-              allowClear
-              treeDefaultExpandAll
-              multiple
-              treeCheckable
-              showCheckedStrategy={TreeSelect.SHOW_PARENT}
-              maxTagCount={3}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label="权限角色"
-            name="role"
-            initialValue="operator"
-            rules={[{ required: true, message: '请选择权限角色' }]}
-          >
-            <Select placeholder="选择权限角色">
-              <Select.Option value="admin">管理员 - 所有操作权限</Select.Option>
-              <Select.Option value="operator">操作员 - 发布、查看</Select.Option>
-              <Select.Option value="viewer">只读 - 仅查看</Select.Option>
+            <Select placeholder="选择角色">
+              {roles.map(role => (
+                <Select.Option key={role.id} value={role.id}>
+                  {role.name} ({role.code}) {role.role_type === 'system' && <Tag color="red">系统</Tag>}
+                </Select.Option>
+              ))}
             </Select>
           </Form.Item>
         </Form>

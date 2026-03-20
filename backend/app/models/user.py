@@ -34,7 +34,6 @@ class User(Base):
     mfa_enabled = Column(Boolean, default=False)   # 多因素认证
     
     # 关系
-    permissions = relationship("Permission", back_populates="user", cascade="all, delete-orphan")
     releases = relationship("ReleaseRecord", foreign_keys="ReleaseRecord.operator_id", back_populates="operator")
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     role_groups = relationship("UserRoleGroup", back_populates="user", cascade="all, delete-orphan")

@@ -9,10 +9,10 @@ from typing import List, Optional
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.models.permission import Permission, PermissionRole
 from app.schemas.user import UserCreate, UserUpdate, UserResponse
 from app.api.v1.auth import get_current_active_user, require_admin
 from app.core.security import get_password_hash
+from app.services.rbac_service import RBACService
 
 router = APIRouter()
 
@@ -159,67 +159,87 @@ async def delete_user(
     return {"message": "User deleted successfully"}
 
 
-# 权限管理 API
+# 用户角色管理 API (使用RBAC)
+@router.get("/{user_id}/roles", dependencies=[Depends(require_admin)])
+async def get_user_roles(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取用户的RBAC角色列表"""
+    from app.models.role import UserRole, Role
+    
+    result = await db.execute(
+        select(Role, UserRole)
+        .join(UserRole, Role.id == UserRole.role_id)
+        .where(UserRole.user_id == user_id, Role.status == 1)
+    )
+    
+    roles = []
+    for role, user_role in result.all():
+        roles.append({
+            "id": role.id,
+            "name": role.name,
+            "code": role.code,
+            "role_type": role.role_type.value if role.role_type else None,
+            "valid_from": user_role.valid_from,
+            "valid_until": user_role.valid_until
+        })
+    
+    return {"items": roles}
+
+
 @router.get("/{user_id}/permissions", dependencies=[Depends(require_admin)])
 async def get_user_permissions(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """获取用户权限列表"""
-    result = await db.execute(
-        select(Permission).where(Permission.user_id == user_id)
-    )
-    permissions = result.scalars().all()
-    
+    """获取用户的RBAC权限列表"""
+    rbac_service = RBACService(db)
+    permissions = await rbac_service.get_user_permissions(user_id)
     return {"items": permissions}
 
 
-@router.post("/{user_id}/permissions", dependencies=[Depends(require_admin)])
-async def add_user_permission(
+@router.post("/{user_id}/roles/{role_id}", dependencies=[Depends(require_admin)])
+async def assign_role_to_user(
     user_id: int,
-    permission_data: dict,
+    role_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """添加用户权限"""
-    # 检查用户是否存在
-    result = await db.execute(select(User).where(User.id == user_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="User not found")
+    """为用户分配角色"""
+    rbac_service = RBACService(db)
     
-    # 创建权限
-    new_permission = Permission(
-        user_id=user_id,
-        cluster_id=permission_data.get('cluster_id'),
-        namespace_id=permission_data.get('namespace_id'),
-        role=PermissionRole(permission_data['role'])
-    )
-    
-    db.add(new_permission)
-    await db.commit()
-    await db.refresh(new_permission)
-    
-    return new_permission
+    try:
+        await rbac_service.assign_role_to_user(user_id, role_id)
+        return {"message": "角色分配成功"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{user_id}/permissions/{permission_id}", dependencies=[Depends(require_admin)])
-async def remove_user_permission(
+@router.delete("/{user_id}/roles/{role_id}", dependencies=[Depends(require_admin)])
+async def remove_role_from_user(
     user_id: int,
-    permission_id: int,
+    role_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """删除用户权限"""
+    """移除用户的角色"""
+    from app.models.role import UserRole
+    
     result = await db.execute(
-        select(Permission).where(Permission.id == permission_id, Permission.user_id == user_id)
+        select(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.role_id == role_id
+        )
     )
-    permission = result.scalar_one_or_none()
+    user_role = result.scalar_one_or_none()
     
-    if not permission:
-        raise HTTPException(status_code=404, detail="Permission not found")
+    if not user_role:
+        raise HTTPException(status_code=404, detail="用户未拥有该角色")
     
-    await db.delete(permission)
+    await db.delete(user_role)
     await db.commit()
     
-    return {"message": "Permission removed successfully"}
+    return {"message": "角色移除成功"}

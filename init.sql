@@ -234,20 +234,6 @@ CREATE TABLE IF NOT EXISTS role_group_namespaces (
     UNIQUE KEY uix_role_group_namespace (role_group_id, namespace_id)
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 权限表
-CREATE TABLE IF NOT EXISTS permissions (
-    id INTEGER NOT NULL AUTO_INCREMENT,
-    user_id INTEGER NOT NULL,
-    cluster_id INTEGER,
-    namespace_id INTEGER,
-    `role` ENUM('ADMIN','DEVELOPER','VIEWER','OPERATOR') NOT NULL,
-    created_at TIMESTAMP NULL DEFAULT (now()),
-    PRIMARY KEY (id),
-    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE,
-    FOREIGN KEY(cluster_id) REFERENCES clusters (id) ON DELETE CASCADE,
-    FOREIGN KEY(namespace_id) REFERENCES namespaces (id) ON DELETE CASCADE
-) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER NOT NULL AUTO_INCREMENT,
