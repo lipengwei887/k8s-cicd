@@ -21,7 +21,7 @@ engine = create_async_engine(
     pool_size=10,          # 基础连接数：10（适合中小并发）
     max_overflow=10,       # 溢出连接数：10（高峰期额外连接）
     pool_timeout=30,       # 获取连接超时：30秒（避免频繁超时）
-    pool_pre_ping=True,    # 连接前检查连接是否有效
+    pool_pre_ping=False,   # 禁用连接前检查（避免 greenlet 问题）
     pool_recycle=1800,     # 30分钟回收连接（避免长时间占用）
 )
 

@@ -31,6 +31,22 @@ class Settings(BaseSettings):
     # 加密配置
     ENCRYPTION_KEY: Optional[str] = None
     
+    # LDAP 配置
+    LDAP_ENABLED: bool = False
+    LDAP_SERVER: str = "ldap://localhost"
+    LDAP_PORT: int = 389
+    LDAP_USE_SSL: bool = False
+    LDAP_BIND_DN: str = ""
+    LDAP_BIND_PASSWORD: str = ""
+    LDAP_USER_BASE_DN: str = ""
+    LDAP_USER_FILTER: str = "(sAMAccountName={username})"
+    LDAP_USER_ATTRS: str = "sAMAccountName,mail,displayName"
+    
+    @property
+    def ldap_user_attrs_list(self) -> list:
+        """将逗号分隔的字符串转换为列表"""
+        return [attr.strip() for attr in self.LDAP_USER_ATTRS.split(",") if attr.strip()]
+
     class Config:
         env_file = ".env"
 

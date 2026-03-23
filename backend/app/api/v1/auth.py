@@ -52,38 +52,170 @@ async def get_current_active_user(
     return current_user
 
 
+def _create_token_response(user: User) -> dict:
+    """创建 Token 响应"""
+    access_token = create_access_token(
+        data={"sub": str(user.id), "username": user.username, "role": user.role.value if user.role else None}
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "real_name": user.real_name,
+            "role": user.role.value if user.role else None,
+            "status": user.status,
+            "is_superuser": user.is_superuser,
+            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        }
+    }
+
+
+async def _authenticate_local(db: AsyncSession, username: str, password: str) -> Optional[User]:
+    """
+    本地认证
+    """
+    result = await db.execute(
+        select(User).where(User.username == username)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user or not user.password_hash:
+        return None
+    
+    if not verify_password(password, user.password_hash):
+        return None
+    
+    return user
+
+
+async def _authenticate_ldap(db: AsyncSession, username: str, password: str) -> Optional[User]:
+    """
+    LDAP 认证
+    认证成功后自动创建或更新本地用户
+    """
+    if not settings.LDAP_ENABLED:
+        return None
+    
+    from app.services.ldap_service import ldap_service, LDAPServiceError
+    
+    try:
+        # LDAP 认证
+        ldap_user = await ldap_service.authenticate(username, password)
+        
+        if not ldap_user:
+            return None
+        
+        # 查询本地是否已存在该用户
+        result = await db.execute(
+            select(User).where(User.username == username)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            # 更新现有用户信息
+            user.email = ldap_user["email"]
+            user.real_name = ldap_user["real_name"]
+            user.status = 1  # 确保用户启用
+            # LDAP 用户不存储密码
+        else:
+            # 创建新用户
+            user = User(
+                username=ldap_user["username"],
+                email=ldap_user["email"],
+                real_name=ldap_user["real_name"],
+                password_hash=None,  # LDAP 用户无本地密码
+                status=1,
+                role=UserRole.DEVELOPER,  # 默认角色
+                is_superuser=False
+            )
+            db.add(user)
+        
+        await db.commit()
+        await db.refresh(user)
+        return user
+        
+    except LDAPServiceError as e:
+        # LDAP 服务异常，记录日志但不暴露细节
+        print(f"LDAP service error: {e}")
+        return None
+
+
 @router.post("/login", response_model=Token)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
-    """用户登录"""
-    result = await db.execute(
-        select(User).where(User.username == form_data.username)
-    )
-    user = result.scalar_one_or_none()
+    """
+    用户登录 - 支持本地和 LDAP 认证
     
-    if not user or not verify_password(form_data.password, user.password_hash):
+    认证流程：
+    1. 先尝试本地认证
+    2. 本地失败且 LDAP 启用时，尝试 LDAP 认证
+    3. LDAP 认证成功自动创建/更新本地用户
+    """
+    username = form_data.username
+    password = form_data.password
+    
+    # 1. 尝试本地认证
+    user = await _authenticate_local(db, username, password)
+    
+    # 2. 本地认证失败，尝试 LDAP
+    if not user and settings.LDAP_ENABLED:
+        user = await _authenticate_ldap(db, username, password)
+    
+    # 3. 全部失败
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # 检查用户状态
     if user.status != 1:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled"
         )
     
-    access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.username, "role": user.role.value}
-    )
+    # 更新最后登录时间
+    from datetime import datetime
+    user.last_login_at = datetime.now()
+    await db.commit()
     
+    # 预加载所有需要的字段（避免懒加载问题）
+    user_id = user.id
+    user_username = user.username
+    user_email = user.email
+    user_real_name = user.real_name
+    user_role = user.role.value if user.role else None
+    user_status = user.status
+    user_is_superuser = user.is_superuser
+    user_last_login_at = user.last_login_at.isoformat() if user.last_login_at else None
+    user_created_at = user.created_at.isoformat() if user.created_at else None
+    
+    # 构建响应
+    access_token = create_access_token(
+        data={"sub": str(user_id), "username": user_username, "role": user_role}
+    )
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user
+        "user": {
+            "id": user_id,
+            "username": user_username,
+            "email": user_email,
+            "real_name": user_real_name,
+            "role": user_role,
+            "status": user_status,
+            "is_superuser": user_is_superuser,
+            "last_login_at": user_last_login_at,
+            "created_at": user_created_at
+        }
     }
 
 
