@@ -18,29 +18,24 @@ fi
 
 cd "$BACKEND_DIR"
 
-# 检查 Python3 是否安装
-if ! command -v python3 &> /dev/null; then
-    echo "错误: 未找到 python3，请先安装 Python 3.9+"
+# 使用 Python 3.11（Alibaba Cloud Linux 3 自带）
+PYTHON_CMD="/usr/bin/python3.11"
+
+# 检查 Python 3.11 是否存在
+if [ ! -f "$PYTHON_CMD" ]; then
+    echo "错误: 未找到 $PYTHON_CMD"
+    echo "请安装 Python 3.11: yum install python3.11"
     exit 1
 fi
 
-# 检查虚拟环境
-if [ -d "$SCRIPT_DIR/.venv" ]; then
-    echo "使用虚拟环境: $SCRIPT_DIR/.venv"
-    source "$SCRIPT_DIR/.venv/bin/activate"
-elif [ -d "venv" ]; then
-    echo "使用虚拟环境: $BACKEND_DIR/venv"
-    source venv/bin/activate
-elif [ -d ".venv" ]; then
-    echo "使用虚拟环境: $BACKEND_DIR/.venv"
-    source .venv/bin/activate
-fi
+echo "使用 Python: $PYTHON_CMD"
+$PYTHON_CMD --version
 
 # 检查依赖是否安装
 echo "检查依赖..."
-python3 -c "import fastapi" 2>/dev/null || {
+$PYTHON_CMD -c "import fastapi" 2>/dev/null || {
     echo "安装依赖..."
-    pip3 install -r requirements.txt
+    $PYTHON_CMD -m pip install -r requirements.txt
 }
 
 # 检查 .env 文件
@@ -51,28 +46,53 @@ fi
 # 获取运行模式
 MODE="${1:-dev}"
 
+# 日志文件
+LOG_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/backend.log"
+
 # 根据模式启动
 case "$MODE" in
     dev)
         echo "启动后端服务 (开发模式)..."
         echo "访问地址: http://localhost:8000"
         echo "API 文档: http://localhost:8000/docs"
+        echo "日志文件: $LOG_FILE"
         echo "按 Ctrl+C 停止服务"
         echo ""
-        exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+        exec $PYTHON_CMD -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload 2>&1 | tee -a "$LOG_FILE"
         ;;
     prod)
         echo "启动后端服务 (生产模式)..."
         echo "访问地址: http://localhost:8000"
+        echo "日志文件: $LOG_FILE"
         echo "按 Ctrl+C 停止服务"
         echo ""
-        # 生产模式: 多个 worker，禁用热重载
-        exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+        # 生产模式: 多个 worker，禁用热重载，后台运行
+        nohup $PYTHON_CMD -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 > "$LOG_FILE" 2>&1 &
+        echo "后端服务已后台启动，PID: $!"
+        echo "查看日志: tail -f $LOG_FILE"
+        ;;
+    logs)
+        # 查看日志
+        if [ -f "$LOG_FILE" ]; then
+            tail -f "$LOG_FILE"
+        else
+            echo "日志文件不存在: $LOG_FILE"
+            exit 1
+        fi
+        ;;
+    stop)
+        # 停止服务
+        echo "停止后端服务..."
+        pkill -f "uvicorn app.main:app" 2>/dev/null && echo "已停止" || echo "服务未运行"
         ;;
     *)
-        echo "用法: $0 [dev|prod]"
-        echo "  dev  - 开发模式（热重载）"
-        echo "  prod - 生产模式"
+        echo "用法: $0 [dev|prod|logs|stop]"
+        echo "  dev   - 开发模式（热重载，前台运行）"
+        echo "  prod  - 生产模式（后台运行）"
+        echo "  logs  - 查看日志"
+        echo "  stop  - 停止服务"
         exit 1
         ;;
 esac

@@ -123,11 +123,14 @@ async def _authenticate_ldap(db: AsyncSession, username: str, password: str) -> 
             # LDAP 用户不存储密码
         else:
             # 创建新用户
+            # LDAP 用户使用随机密码占位（无法用于本地登录）
+            from app.core.security import get_password_hash
+            random_password = get_password_hash(f"ldap_{username}_{ldap_user['email']}_placeholder")
             user = User(
                 username=ldap_user["username"],
                 email=ldap_user["email"],
                 real_name=ldap_user["real_name"],
-                password_hash=None,  # LDAP 用户无本地密码
+                password_hash=random_password,  # LDAP 用户使用占位密码
                 status=1,
                 role=UserRole.DEVELOPER,  # 默认角色
                 is_superuser=False

@@ -11,7 +11,7 @@ services:
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
     volumes:
-      - mysql_data:/var/lib/mysql
+      - k8sfabu_mysql_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "3306:3306"
@@ -96,8 +96,8 @@ services:
       - k8s-platform-network
 
 volumes:
-  mysql_data:
-    driver: local
+  k8sfabu_mysql_data:
+    external: true
   redis_data:
     driver: local
 
