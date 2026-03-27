@@ -21,6 +21,9 @@ from app.services.rbac_service import RBACService
 
 logger = logging.getLogger(__name__)
 
+# 全局 task 引用集合，防止 asyncio.create_task 创建的 task 被 GC 回收
+_background_tasks: set = set()
+
 
 async def _run_release_in_background(release_id: int, operator_id: int):
     """后台执行发布任务（已由端点将状态置为 RUNNING）"""
@@ -339,7 +342,10 @@ async def execute_release(
     await db.commit()
     
     # 后台启动发布任务，立即返回
-    asyncio.create_task(_run_release_in_background(release_id, current_user.id))
+    # 必须将 task 保存到全局集合，防止被 GC 回收导致任务从未执行
+    task = asyncio.create_task(_run_release_in_background(release_id, current_user.id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     
     return {
         "success": True,
