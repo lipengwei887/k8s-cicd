@@ -426,6 +426,39 @@ class K8sSyncService:
             logger.error(f"Connection test failed: {e}")
             return False
     
+    def get_deployment_image(self, namespace: str, deployment_name: str) -> Optional[str]:
+        """
+        获取指定 Deployment 的当前镜像（实时从 K8s 获取）
+        
+        Args:
+            namespace: 命名空间名称
+            deployment_name: Deployment 名称
+            
+        Returns:
+            当前镜像地址，如果获取失败返回 None
+        """
+        try:
+            deployment = self._apps_v1.read_namespaced_deployment(deployment_name, namespace)
+            containers = deployment.spec.template.spec.containers
+            main_container = containers[0] if containers else None
+            current_image = main_container.image if main_container else None
+            
+            if current_image:
+                logger.info(f"Got current image for {namespace}/{deployment_name}: {current_image}")
+            else:
+                logger.warning(f"No image found for {namespace}/{deployment_name}")
+            
+            return current_image
+        except ApiException as e:
+            if e.status == 404:
+                logger.warning(f"Deployment {deployment_name} not found in namespace {namespace}")
+            else:
+                logger.error(f"Failed to get deployment image: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get deployment image: {e}")
+            return None
+    
     def get_cluster_info(self) -> Dict[str, Any]:
         """
         获取集群基本信息

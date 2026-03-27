@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Button, Table, Space, Avatar, Dropdown, Tag, message, Modal, Descriptions, Progress, Spin } from 'antd'
-import { PlusOutlined, ReloadOutlined, SettingOutlined, UserOutlined, LogoutOutlined, CheckOutlined, CloseOutlined, PlayCircleOutlined, RollbackOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons'
+import { Card, Row, Col, Button, Table, Space, Avatar, Dropdown, Tag, message, Modal, Descriptions, Progress, Alert, Badge } from 'antd'
+import { PlusOutlined, ReloadOutlined, SettingOutlined, UserOutlined, LogoutOutlined, CheckOutlined, CloseOutlined, PlayCircleOutlined, RollbackOutlined, EyeOutlined, FileTextOutlined, CheckCircleOutlined, CloseCircleOutlined, SyncOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { releaseApi, clusterApi, serviceApi, authApi, userApi, harborApi } from '@/api'
 import StatCard from '@/components/StatCard'
@@ -44,7 +44,19 @@ const Dashboard: React.FC = () => {
   })() : null
   
   useWebSocket(wsUrl, {
+    onConnect: () => {
+      console.log('[Dashboard] WebSocket connected for release:', selectedRelease?.id)
+    },
+    onDisconnect: () => {
+      console.log('[Dashboard] WebSocket disconnected for release:', selectedRelease?.id)
+    },
     onMessage: (data) => {
+      console.log('[Dashboard] WebSocket message received:', {
+        status: data.status,
+        pods: data.pods?.map((p: any) => ({ name: p.name, status: p.status, ready: p.ready })),
+        progress_percent: data.progress_percent,
+        elapsed: data.elapsed_seconds
+      })
       setReleaseProgress(data)
       if (data.status === 'completed') {
         message.success('发布成功！')
@@ -560,111 +572,197 @@ const Dashboard: React.FC = () => {
             关闭
           </Button>
         ]}
-        width={800}
+        width={860}
       >
-        {selectedRelease && (
-          <div>
-            <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="发布ID">{selectedRelease.id}</Descriptions.Item>
-              <Descriptions.Item label="服务">{getServiceName(selectedRelease.service_id)}</Descriptions.Item>
-              <Descriptions.Item label="镜像标签">{selectedRelease.image_tag}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={
-                  selectedRelease.status === 'success' ? 'success' :
-                  selectedRelease.status === 'failed' ? 'error' :
-                  selectedRelease.status === 'running' ? 'processing' :
-                  selectedRelease.status === 'pending' ? 'warning' :
-                  'default'
-                }>
-                  {selectedRelease.status}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="发布策略">{selectedRelease.strategy}</Descriptions.Item>
-              <Descriptions.Item label="发布时间">
-                {selectedRelease.created_at ? new Date(selectedRelease.created_at + 'Z').toLocaleString('zh-CN') : '-'}
-              </Descriptions.Item>
-              {selectedRelease.completed_at && (
-                <Descriptions.Item label="完成时间">
-                  {new Date(selectedRelease.completed_at + 'Z').toLocaleString('zh-CN')}
-                </Descriptions.Item>
-              )}
-            </Descriptions>
+        {selectedRelease && (() => {
+          // 计算当前要展示的 Pod 列表
+          // 优先使用 WebSocket 实时进度中的 pods，其次是数据库存的 pod_status
+          let displayPods: any[] = []
+          if (releaseProgress?.pods?.length > 0) {
+            displayPods = releaseProgress.pods
+          } else if (selectedRelease.pod_status) {
+            try {
+              const ps = typeof selectedRelease.pod_status === 'string'
+                ? JSON.parse(selectedRelease.pod_status)
+                : selectedRelease.pod_status
+              // pod_status 可能是进度对象 {pods: [...]} 或直接是数组
+              displayPods = ps?.pods || (Array.isArray(ps) ? ps : [])
+            } catch {}
+          }
 
-            {/* 实时发布进度 */}
-            {releaseProgress && (
-              <div style={{ marginBottom: 16 }}>
-                <h4>发布进度</h4>
-                <Card>
-                  <Progress 
-                    percent={Math.round(releaseProgress.progress_percent || 0)} 
-                    status={releaseProgress.status === 'failed' ? 'exception' : 'active'}
-                  />
-                  <Descriptions size="small" column={2}>
-                    <Descriptions.Item label="期望副本">{releaseProgress.desired || 0}</Descriptions.Item>
-                    <Descriptions.Item label="已更新">{releaseProgress.updated || 0}</Descriptions.Item>
-                    <Descriptions.Item label="就绪">{releaseProgress.ready || 0}</Descriptions.Item>
-                    <Descriptions.Item label="不可用">{releaseProgress.unavailable || 0}</Descriptions.Item>
-                    <Descriptions.Item label="耗时">{releaseProgress.elapsed_seconds || 0}s</Descriptions.Item>
-                  </Descriptions>
-                  {releaseProgress.status === 'running' && (
-                    <Spin tip="正在发布，请稍候..." style={{ marginTop: 16 }} />
+          // 当前展示的 message
+          const displayMsg = releaseProgress?.message || selectedRelease.message || ''
+
+          // 当前状态：优先以 WebSocket 实时状态为准
+          const currentStatus = releaseProgress?.status
+            ? (releaseProgress.status === 'completed' ? 'success' : releaseProgress.status)
+            : selectedRelease.status
+
+          // 计算实际进度：基于已 Running Pod 数 / 期望副本数
+          // 而不是直接用 ready_replicas，避免 Pods 未完全 Running 时就显示 100%
+          const desiredCount = releaseProgress?.desired || 0
+          const runningCount = displayPods.filter(
+            (p: any) => p.status === 'Running' && p.ready === true
+          ).length
+          const progressPercent = desiredCount > 0
+            ? Math.round((runningCount / desiredCount) * 100)
+            : 0
+
+          // Pod 表格列定义
+          const podColumns = [
+            { title: 'Pod 名称', dataIndex: 'name', key: 'name', ellipsis: true },
+            {
+              title: '状态', dataIndex: 'status', key: 'status',
+              render: (s: string) => {
+                if (s === 'Running') return <Tag color="success"><CheckCircleOutlined /> Running</Tag>
+                if (s === 'Pending') return <Tag color="processing"><SyncOutlined spin /> Pending</Tag>
+                if (['CrashLoopBackOff','Error','OOMKilled','ErrImagePull','ImagePullBackOff'].includes(s))
+                  return <Tag color="error"><CloseCircleOutlined /> {s}</Tag>
+                return <Tag>{s || '-'}</Tag>
+              }
+            },
+            {
+              title: 'Ready', dataIndex: 'ready', key: 'ready',
+              render: (r: any) => {
+                // r 可能是 boolean 或字符串如 "1/1"
+                const isReady = r === true || r === 'true' || (typeof r === 'string' && r.includes('/') && r.split('/')[0] === r.split('/')[1] && r.split('/')[0] !== '0')
+                return isReady
+                  ? <Badge status="success" text="就绪" />
+                  : <Badge status="default" text="未就绪" />
+              }
+            },
+            { title: '重启次数', dataIndex: 'restarts', key: 'restarts' },
+          ]
+      
+          return (
+            <div>
+              {/* 基本信息 */}
+              <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="发布ID">{selectedRelease.id}</Descriptions.Item>
+                <Descriptions.Item label="服务">{getServiceName(selectedRelease.service_id)}</Descriptions.Item>
+                <Descriptions.Item label="镜像标签">{selectedRelease.image_tag}</Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <Tag color={
+                    currentStatus === 'success' ? 'success' :
+                    currentStatus === 'failed' ? 'error' :
+                    currentStatus === 'running' || currentStatus === 'updating' ? 'processing' :
+                    currentStatus === 'pending' ? 'warning' : 'default'
+                  }>
+                    {currentStatus === 'success' ? '成功' :
+                     currentStatus === 'failed' ? '失败' :
+                     currentStatus === 'running' || currentStatus === 'updating' ? '发布中...' :
+                     currentStatus === 'completed' ? '成功' :
+                     currentStatus || '-'}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="发布策略">{selectedRelease.strategy}</Descriptions.Item>
+                <Descriptions.Item label="创建时间">
+                  {selectedRelease.created_at ? new Date(selectedRelease.created_at + 'Z').toLocaleString('zh-CN') : '-'}
+                </Descriptions.Item>
+                {selectedRelease.completed_at && (
+                  <Descriptions.Item label="完成时间">
+                    {new Date(selectedRelease.completed_at + 'Z').toLocaleString('zh-CN')}
+                  </Descriptions.Item>
+                )}
+              </Descriptions>
+      
+              {/* 进行中：进度条 */}
+              {(currentStatus === 'running' || currentStatus === 'updating') && (
+                <Card size="small" style={{ marginBottom: 16, background: '#f0f5ff', border: '1px solid #adc6ff' }}>
+                  <Space>
+                    <SyncOutlined spin style={{ color: '#1677ff' }} />
+                    <span style={{ color: '#1677ff', fontWeight: 500 }}>正在发布，请稿候...</span>
+                    {releaseProgress?.elapsed_seconds != null && (
+                      <span style={{ color: '#666' }}>已耗时 {releaseProgress.elapsed_seconds}s</span>
+                    )}
+                  </Space>
+                  {releaseProgress && desiredCount > 0 && (
+                    <Progress
+                      percent={progressPercent}
+                      size="small"
+                      status={progressPercent < 100 ? 'active' : 'success'}
+                      format={_p => `${runningCount}/${desiredCount} Running`}
+                      style={{ marginTop: 8 }}
+                    />
                   )}
                 </Card>
-              </div>
-            )}
-
-            {selectedRelease.message && (
-              <div style={{ marginBottom: 16 }}>
-                <h4>发布消息</h4>
-                <div style={{ 
-                  padding: 12, 
-                  background: selectedRelease.status === 'failed' ? '#fff2f0' : '#f6ffed',
-                  border: `1px solid ${selectedRelease.status === 'failed' ? '#ffccc7' : '#b7eb8f'}`,
-                  borderRadius: 4,
-                  color: selectedRelease.status === 'failed' ? '#cf1322' : '#389e0d'
-                }}>
-                  {selectedRelease.message}
+              )}
+      
+              {/* 成功 */}
+              {(currentStatus === 'success' || currentStatus === 'completed') && (
+                <Alert
+                  type="success"
+                  icon={<CheckCircleOutlined />}
+                  showIcon
+                  message="发布成功"
+                  description="所有 Pod 均已处于 Running 状态"
+                  style={{ marginBottom: 16 }}
+                />
+              )}
+      
+              {/* 失败：展示失败原因 */}
+              {currentStatus === 'failed' && displayMsg && (
+                <Alert
+                  type="error"
+                  icon={<CloseCircleOutlined />}
+                  showIcon
+                  message="发布失败 - 失败原因"
+                  description={
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 12, fontFamily: 'monospace', maxHeight: 200, overflow: 'auto' }}>
+                      {displayMsg}
+                    </pre>
+                  }
+                  style={{ marginBottom: 16 }}
+                />
+              )}
+      
+              {/* Pod 状态列表 */}
+              {displayPods.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ margin: '0 0 8px' }}>Pod 实时状态</h4>
+                  <Table
+                    dataSource={displayPods}
+                    columns={podColumns}
+                    rowKey="name"
+                    size="small"
+                    pagination={false}
+                    bordered
+                  />
                 </div>
-              </div>
-            )}
-
-            {/* Pod 状态 */}
-            {selectedRelease.pod_status && (
-              <div style={{ marginBottom: 16 }}>
-                <h4>Pod 状态</h4>
-                <pre style={{ 
-                  background: '#f5f5f5', 
-                  padding: 12, 
-                  borderRadius: 4,
-                  maxHeight: 200,
-                  overflow: 'auto',
-                  fontSize: 12
-                }}>
-                  {JSON.stringify(JSON.parse(selectedRelease.pod_status), null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {/* 日志显示 */}
-            {selectedRelease.logs && (
-              <div>
-                <h4><FileTextOutlined /> Pod 日志</h4>
-                <pre style={{ 
-                  background: '#1e1e1e', 
-                  color: '#d4d4d4',
-                  padding: 12, 
-                  borderRadius: 4,
-                  maxHeight: 300,
-                  overflow: 'auto',
-                  fontSize: 12,
-                  fontFamily: 'monospace'
-                }}>
-                  {selectedRelease.logs}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+      
+              {/* 成功无进度时，展示消息 */}
+              {!releaseProgress && selectedRelease.message && currentStatus !== 'failed' && (
+                <div style={{ marginBottom: 16 }}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={selectedRelease.message}
+                  />
+                </div>
+              )}
+      
+              {/* Pod 日志 */}
+              {selectedRelease.logs && (
+                <div>
+                  <h4 style={{ margin: '0 0 8px' }}><FileTextOutlined /> Pod 日志</h4>
+                  <pre style={{
+                    background: '#1e1e1e',
+                    color: '#d4d4d4',
+                    padding: 12,
+                    borderRadius: 4,
+                    maxHeight: 300,
+                    overflow: 'auto',
+                    fontSize: 12,
+                    fontFamily: 'monospace'
+                  }}>
+                    {selectedRelease.logs}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* 再次发布弹窗 */}

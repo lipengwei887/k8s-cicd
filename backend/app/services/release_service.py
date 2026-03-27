@@ -141,7 +141,7 @@ class ReleaseService:
         if not release:
             raise ValueError(f"Release {release_id} not found")
         
-        if release.status not in [ReleaseStatus.PENDING, ReleaseStatus.APPROVING]:
+        if release.status not in [ReleaseStatus.PENDING, ReleaseStatus.APPROVING, ReleaseStatus.RUNNING]:
             raise ValueError(f"Cannot execute release with status: {release.status}")
         
         # 获取服务和集群信息
@@ -164,10 +164,11 @@ class ReleaseService:
         kubeconfig = secret_manager.decrypt(cluster.kubeconfig_encrypted) if cluster.kubeconfig_encrypted else None
         token = secret_manager.decrypt(cluster.sa_token_encrypted) if cluster.sa_token_encrypted else ""
         
-        # 更新状态为运行中
-        release.status = ReleaseStatus.RUNNING
-        release.started_at = datetime.utcnow()
-        await self.db.commit()
+        # 如果状态已经是 RUNNING（由端点提前设置），则跳过重复设置
+        if release.status != ReleaseStatus.RUNNING:
+            release.status = ReleaseStatus.RUNNING
+            release.started_at = datetime.utcnow()
+            await self.db.commit()
         
         try:
             # 创建 K8s 服务（优先使用 kubeconfig）

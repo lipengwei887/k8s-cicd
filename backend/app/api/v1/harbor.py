@@ -58,6 +58,7 @@ async def get_service_image_tags(
 ):
     """
     根据服务 ID 获取该服务对应镜像的标签列表
+    优先从 K8s 实时获取当前镜像，如果没有则从数据库获取
     自动从服务的 current_image 中提取 harbor 地址和项目信息
     优先尝试从 K8s Secret 获取 Harbor 认证信息
     
@@ -75,13 +76,6 @@ async def get_service_image_tags(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
-    # 检查是否有当前镜像地址
-    if not service.current_image:
-        raise HTTPException(
-            status_code=400, 
-            detail="Service does not have current_image configured"
-        )
-    
     # 获取服务的集群信息
     namespace_result = await db.execute(
         select(Namespace).where(Namespace.id == service.namespace_id)
@@ -89,8 +83,10 @@ async def get_service_image_tags(
     namespace = namespace_result.scalar_one_or_none()
     
     harbor_credentials = None
+    current_image = None
+    image_source = "database"  # 记录镜像来源
     
-    # 尝试从 K8s Secret 获取 Harbor 认证信息
+    # 尝试从 K8s 实时获取当前镜像
     if namespace:
         cluster_result = await db.execute(
             select(Cluster).where(Cluster.id == namespace.cluster_id)
@@ -102,27 +98,52 @@ async def get_service_image_tags(
                 kubeconfig = secret_manager.decrypt(cluster.kubeconfig_encrypted)
                 k8s_service = K8sSyncService(kubeconfig)
                 
-                # 首先尝试从服务所在命名空间查找
-                harbor_credentials = k8s_service.find_harbor_secret(namespace.name)
+                logger.info(f"Attempting to get image from K8s: namespace={namespace.name}, deploy_name={service.deploy_name}")
                 
-                # 如果没找到，尝试从 default 命名空间查找
+                # 实时从 K8s 获取当前镜像
+                k8s_image = k8s_service.get_deployment_image(namespace.name, service.deploy_name)
+                if k8s_image:
+                    current_image = k8s_image
+                    image_source = "kubernetes"
+                    logger.info(f"Using real-time image from K8s for service {service_id}: {current_image}")
+                else:
+                    logger.warning(f"K8s returned empty image for {namespace.name}/{service.deploy_name}")
+                
+                # 尝试从 K8s Secret 获取 Harbor 认证信息
+                harbor_credentials = k8s_service.find_harbor_secret(namespace.name)
                 if not harbor_credentials:
                     harbor_credentials = k8s_service.find_harbor_secret("default")
                     
                 if harbor_credentials:
                     logger.info(f"Found Harbor credentials from K8s secret for service {service_id}")
             except Exception as e:
-                logger.warning(f"Failed to get Harbor secret from K8s: {e}")
+                logger.warning(f"Failed to get info from K8s: {e}")
+                logger.exception(e)
+        else:
+            if not cluster:
+                logger.warning(f"No cluster found for namespace {namespace.id}")
+            elif not cluster.kubeconfig_encrypted:
+                logger.warning(f"Cluster {cluster.id} has no kubeconfig")
+    
+    # 如果无法从 K8s 获取，使用数据库中的 current_image
+    if not current_image:
+        current_image = service.current_image
+        if not current_image:
+            raise HTTPException(
+                status_code=400, 
+                detail="Service does not have current_image configured"
+            )
+        logger.info(f"Using cached image from database for service {service_id}: {current_image}")
     
     try:
         # 解析镜像地址获取 harbor host
-        logger.info(f"Parsing image URL for service {service_id}: {service.current_image}")
-        harbor_host, project, repository = harbor_service.parse_image_url(service.current_image)
+        logger.info(f"Parsing image URL for service {service_id}: {current_image}")
+        harbor_host, project, repository = harbor_service.parse_image_url(current_image)
         
         logger.info(f"Parsed result - host: {harbor_host}, project: {project}, repository: {repository}")
         
         if not harbor_host or not project or not repository:
-            raise HTTPException(status_code=400, detail=f"Invalid image URL format: {service.current_image}")
+            raise HTTPException(status_code=400, detail=f"Invalid image URL format: {current_image}")
         
         # 构建 harbor URL
         harbor_url = f"https://{harbor_host}"
@@ -151,7 +172,8 @@ async def get_service_image_tags(
         return {
             "items": tag_names,
             "total": len(tag_names),
-            "current_image": service.current_image,
+            "current_image": current_image,
+            "image_source": image_source,
             "source": "k8s-secret" if harbor_credentials else "config",
         }
     except HTTPException:

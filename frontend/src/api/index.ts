@@ -13,7 +13,8 @@ const api: AxiosInstance = axios.create({
 // 请求拦截器 - 添加 token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    // 优先取 localStorage（记住我模式），其次 sessionStorage（会话模式）
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -31,7 +32,10 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
+      // 同时清除两处存储
       localStorage.removeItem('token')
+      localStorage.removeItem('tokenExpiry')
+      sessionStorage.removeItem('token')
       window.location.href = '/login'
     } else if (error.response?.status === 403) {
       // 权限不足提示

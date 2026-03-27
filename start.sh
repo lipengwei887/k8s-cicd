@@ -18,13 +18,13 @@ fi
 
 cd "$BACKEND_DIR"
 
-# 使用 Python 3.11（Alibaba Cloud Linux 3 自带）
-PYTHON_CMD="/usr/bin/python3.11"
+# 使用虚拟环境中的 Python
+PYTHON_CMD="$BACKEND_DIR/venv/bin/python"
 
-# 检查 Python 3.11 是否存在
+# 检查虚拟环境是否存在
 if [ ! -f "$PYTHON_CMD" ]; then
-    echo "错误: 未找到 $PYTHON_CMD"
-    echo "请安装 Python 3.11: yum install python3.11"
+    echo "错误: 未找到虚拟环境 $PYTHON_CMD"
+    echo "请先创建虚拟环境: python3 -m venv venv"
     exit 1
 fi
 

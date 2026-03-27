@@ -4,6 +4,8 @@ from sqlalchemy import select, desc, func
 from typing import List, Optional
 import json
 import asyncio
+import logging
+from datetime import datetime, timezone
 
 from app.database import get_db, AsyncSessionLocal
 from app.models.release import ReleaseRecord, ReleaseStatus
@@ -16,6 +18,18 @@ from app.api.v1.auth import get_current_active_user
 from app.models.user import User
 from app.services.release_service import ReleaseService
 from app.services.rbac_service import RBACService
+
+logger = logging.getLogger(__name__)
+
+
+async def _run_release_in_background(release_id: int, operator_id: int):
+    """后台执行发布任务（已由端点将状态置为 RUNNING）"""
+    async with AsyncSessionLocal() as db:
+        try:
+            release_service = ReleaseService(db)
+            await release_service.execute_release(release_id, operator_id)
+        except Exception as e:
+            logger.error(f"Background release {release_id} failed: {e}")
 
 # 权限码中文映射
 PERMISSION_NAMES = {
@@ -313,24 +327,26 @@ async def execute_release(
     
     # 检查时效（如果设置了时效）
     if release.validity_period > 0 and release.validity_end_at:
-        from datetime import datetime, timezone
         if datetime.now(timezone.utc) > release.validity_end_at.replace(tzinfo=timezone.utc):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="发布单已过期，请重新创建发布单"
             )
     
-    try:
-        result = await release_service.execute_release(release_id, current_user.id)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Execute release {release_id} failed: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"发布执行失败: {str(e)}")
+    # 将状态置为 RUNNING，让前端立即看到发布已开始
+    release.status = ReleaseStatus.RUNNING
+    release.started_at = datetime.utcnow()
+    await db.commit()
+    
+    # 后台启动发布任务，立即返回
+    asyncio.create_task(_run_release_in_background(release_id, current_user.id))
+    
+    return {
+        "success": True,
+        "release_id": release_id,
+        "message": "发布已开始，请通过详情页查看进度",
+        "status": "running"
+    }
 
 
 @router.post("/{release_id}/rollback")
@@ -420,6 +436,7 @@ async def websocket_endpoint(
 ):
     """WebSocket 实时推送发布进度"""
     await manager.connect(websocket, release_id)
+    print(f"[WebSocket] Client connected for release {release_id}")
     
     try:
         while True:
@@ -434,7 +451,22 @@ async def websocket_endpoint(
                     
                     if release and release.pod_status:
                         progress = json.loads(release.pod_status)
+                        
+                        # 如果发布单状态已经是成功/失败，覆盖 pod_status 中的状态
+                        # 避免 WebSocket 重连后发送过时的 updating 状态
+                        # 注意：release.status 是 ReleaseStatus 枚举，需要用 value 比较
+                        if release.status.value == 'success':
+                            progress['status'] = 'completed'
+                            print(f"[WebSocket] Release {release_id} already success, forcing status=completed")
+                        elif release.status.value == 'failed':
+                            progress['status'] = 'failed'
+                            progress['message'] = release.message or '发布失败'
+                            print(f"[WebSocket] Release {release_id} already failed, forcing status=failed")
+                        
+                        print(f"[WebSocket] Sending progress for release {release_id}: status={progress.get('status')}, pods_count={len(progress.get('pods', []))}")
                         await websocket.send_json(progress)
+                    else:
+                        print(f"[WebSocket] No pod_status for release {release_id}")
                 finally:
                     await db.close()
             
@@ -442,8 +474,10 @@ async def websocket_endpoint(
             await asyncio.sleep(3)
             
     except WebSocketDisconnect:
+        print(f"[WebSocket] Client disconnected for release {release_id}")
         manager.disconnect(websocket, release_id)
     except Exception as e:
+        print(f"[WebSocket] Error for release {release_id}: {e}")
         manager.disconnect(websocket, release_id)
 
 

@@ -32,9 +32,9 @@ const ReleaseForm: React.FC = () => {
   const [namespaces, setNamespaces] = useState<Namespace[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [imageTags, setImageTags] = useState<Record<number, string[]>>({})
+  const [currentImages, setCurrentImages] = useState<Record<number, string>>({})  // 存储从 K8s 实时获取的当前镜像
   const [, setSelectedService] = useState<Service | null>(null)
   const [selectedServices, setSelectedServices] = useState<Service[]>([])
-  const [, setCurrentImage] = useState<string>('未知')
 
   // 发布状态
   const [releaseId, setReleaseId] = useState<number | null>(null)
@@ -47,7 +47,7 @@ const ReleaseForm: React.FC = () => {
     const host = window.location.host
     return `${protocol}//${host}/api/v1/releases/${releaseId}/progress`
   })() : null
-  useWebSocket(wsUrl, {
+  const { close: closeWebSocket } = useWebSocket(wsUrl, {
     onMessage: (data) => {
       setReleaseProgress(data)
       if (data.status === 'completed') {
@@ -101,11 +101,14 @@ const ReleaseForm: React.FC = () => {
       if (!service) return
 
       setSelectedService(service)
-      setCurrentImage(service.current_image || '未知')
 
-      // 使用 Harbor API 获取镜像标签
+      // 使用 Harbor API 获取镜像标签（包含实时从 K8s 获取的当前镜像）
       const res: any = await harborApi.getServiceImageTags(serviceId, 100)
       setImageTags(res.items || [])
+      // 保存从 K8s 实时获取的当前镜像
+      if (res.current_image) {
+        setCurrentImages(prev => ({ ...prev, [serviceId]: res.current_image }))
+      }
     } catch (error) {
       message.error('加载镜像标签失败，请检查 Harbor 配置')
       console.error('Failed to load image tags:', error)
@@ -133,6 +136,10 @@ const ReleaseForm: React.FC = () => {
     try {
       const res: any = await harborApi.getServiceImageTags(service.id, 100)
       setImageTags(prev => ({ ...prev, [service.id]: res.items || [] }))
+      // 保存从 K8s 实时获取的当前镜像
+      if (res.current_image) {
+        setCurrentImages(prev => ({ ...prev, [service.id]: res.current_image }))
+      }
     } catch (error: any) {
       console.error(`Failed to load image tags for service ${service.id}:`, error)
       // 显示错误提示，但不阻断用户操作
@@ -207,10 +214,41 @@ const ReleaseForm: React.FC = () => {
   const handleExecuteRelease = async (id: number) => {
     setReleaseStatus('running')
     try {
-      await releaseApi.executeRelease(id)
-    } catch (error) {
-      setReleaseStatus('failed')
-      message.error('发布执行失败')
+      const res: any = await releaseApi.executeRelease(id)
+      // 如果返回结果表示失败，更新状态
+      if (!res.success) {
+        setReleaseStatus('failed')
+        setReleaseProgress({
+          status: 'failed',
+          message: res.message || '发布执行失败'
+        } as any)
+        message.error(`发布失败: ${res.message}`)
+      }
+    } catch (error: any) {
+      // 检查是否是超时错误
+      const errorMessage = error?.message || ''
+      const isTimeout = errorMessage.includes('timeout') || error?.code === 'ECONNABORTED'
+      
+      if (isTimeout) {
+        // API 超时，但后端可能还在执行中，继续监听 WebSocket
+        console.log('API 超时，继续监听 WebSocket 获取实时状态')
+        setReleaseProgress({
+          status: 'running',
+          message: '发布执行中，请稍候...'
+        } as any)
+        message.info('发布执行时间较长，正在通过 WebSocket 监听实时进度...')
+        // 不关闭 WebSocket，继续监听
+      } else {
+        // 真正的错误，标记为失败
+        setReleaseStatus('failed')
+        setReleaseProgress({
+          status: 'failed',
+          message: error?.response?.data?.detail || errorMessage || '发布执行失败'
+        } as any)
+        message.error('发布执行失败')
+        // 关闭 WebSocket 连接
+        closeWebSocket()
+      }
     }
   }
 
@@ -301,13 +339,15 @@ const ReleaseForm: React.FC = () => {
 
           {selectedServices.map((service) => {
             const tags = imageTags[service.id] || []
-            const currentTag = service.current_image ? service.current_image.split(':').pop() : ''
+            // 优先使用从 K8s 实时获取的当前镜像，如果没有则使用数据库中的缓存
+            const currentImage = currentImages[service.id] || service.current_image || ''
+            const currentTag = currentImage ? currentImage.split(':').pop() : ''
             return (
               <Card key={service.id} style={{ marginBottom: 16 }} size="small">
                 <div style={{ marginBottom: 8 }}>
                   <Tag color="blue">{service.display_name || service.name}</Tag>
                   <span style={{ color: '#999', fontSize: 12, marginLeft: 8 }}>
-                    当前镜像: {service.current_image || '未知'}
+                    当前镜像: {currentImage || '未知'}
                   </span>
                 </div>
                 <Form.Item
