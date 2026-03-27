@@ -167,11 +167,19 @@ class K8sService:
                 body=deployment
             )
             
+            # 记录 patch 前的 generation，用于后续判断 K8s 是否已收到更新
+            expected_generation = (updated_deployment.metadata.generation or 0)
+            logger.info(f"Deployment patched, expected generation={expected_generation}")
+            
+            # 等待 2 秒让 K8s 开始处理滚动更新，避免第一次轮询时旧状态误判为成功
+            await asyncio.sleep(2)
+            
             # 5. 等待滚动更新完成
             result = await self._wait_for_rolling_update(
                 namespace=namespace,
                 deployment_name=deployment_name,
                 timeout=timeout,
+                expected_generation=expected_generation,
                 progress_callback=progress_callback
             )
             
@@ -206,6 +214,7 @@ class K8sService:
         namespace: str,
         deployment_name: str,
         timeout: int,
+        expected_generation: int = 0,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
         """等待滚动更新完成，包含 Pod 状态检查和失败检测"""
@@ -217,6 +226,7 @@ class K8sService:
         check_interval = 3  # 检查间隔(秒)
         consecutive_failures = 0  # 连续失败计数
         max_consecutive_failures = 3  # 最大连续失败次数
+        min_wait_seconds = 5  # 最少等待5秒才允许判断成功，防止旧状态误判
         
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
@@ -305,12 +315,17 @@ class K8sService:
                     }
                 
                 # 成功判定：必须有 Pod 且所有 Pod 都 Running+Ready 才算成功
+                # 同时要求 observedGeneration >= expected_generation，确认 K8s 已处理此次更新
+                # 且至少等待 min_wait_seconds 秒，防止旧 Pod 还未被替换就误判成功
                 has_pods = len(pod_status) > 0
                 all_pods_running = has_pods and all(
                     p.get('status') == 'Running' and p.get('ready') is True
                     for p in pod_status
                 )
-                if updated == desired and ready == desired and available == desired and ready > 0 and all_pods_running:
+                observed_generation = status.observed_generation or 0
+                generation_ok = (expected_generation == 0) or (observed_generation >= expected_generation)
+                time_ok = elapsed >= min_wait_seconds
+                if updated == desired and ready == desired and available == desired and ready > 0 and all_pods_running and generation_ok and time_ok:
                     progress['status'] = 'completed'
                     if progress_callback:
                         await progress_callback(progress)
