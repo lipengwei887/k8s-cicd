@@ -118,6 +118,10 @@ CREATE TABLE IF NOT EXISTS release_records (
     validity_end_at DATETIME,
     parent_release_id INTEGER,
     is_repeated INTEGER NOT NULL DEFAULT 0,
+    -- 发布诊断相关字段
+    failure_diagnosis JSON,
+    deployment_conditions JSON,
+    events JSON,
     PRIMARY KEY (id),
     FOREIGN KEY(service_id) REFERENCES services (id),
     FOREIGN KEY(operator_id) REFERENCES users (id),
