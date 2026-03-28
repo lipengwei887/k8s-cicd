@@ -629,6 +629,7 @@ const Dashboard: React.FC = () => {
           // Pod 表格列定义
           const podColumns = [
             { title: 'Pod 名称', dataIndex: 'name', key: 'name', ellipsis: true },
+            { title: 'Pod IP', dataIndex: 'pod_ip', key: 'pod_ip', width: 120, render: (ip: string) => ip || '-' },
             {
               title: '状态', dataIndex: 'status', key: 'status',
               render: (s: string) => {
@@ -649,7 +650,7 @@ const Dashboard: React.FC = () => {
                   : <Badge status="default" text="未就绪" />
               }
             },
-            { title: '重启次数', dataIndex: 'restarts', key: 'restarts' },
+            { title: '重启次数', dataIndex: 'restarts', key: 'restarts', width: 80 },
           ]
       
           return (

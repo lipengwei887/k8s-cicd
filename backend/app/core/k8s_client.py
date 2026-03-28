@@ -508,13 +508,17 @@ class K8sService:
                 else:
                     status = pod.status.phase
                 
+                # 获取 Pod IP 地址
+                pod_ip = pod.status.pod_ip if pod.status else None
+                
                 pod_status_list.append({
                     'name': pod.metadata.name,
                     'status': status,
                     'phase': pod.status.phase,
                     'ready': all(cs.ready for cs in container_statuses) if container_statuses else False,
                     'restarts': sum(cs.restart_count for cs in container_statuses),
-                    'age': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None
+                    'age': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+                    'pod_ip': pod_ip
                 })
             
             return pod_status_list
