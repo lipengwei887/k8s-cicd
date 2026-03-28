@@ -455,24 +455,34 @@ async def websocket_endpoint(
                     )
                     release = result.scalar_one_or_none()
                     
-                    if release and release.pod_status:
-                        progress = json.loads(release.pod_status)
+                    if release:
+                        # 初始化进度数据
+                        progress = {}
+                        
+                        # 如果存在 pod_status，解析它
+                        if release.pod_status:
+                            progress = json.loads(release.pod_status)
                         
                         # 如果发布单状态已经是成功/失败，覆盖 pod_status 中的状态
                         # 避免 WebSocket 重连后发送过时的 updating 状态
                         # 注意：release.status 是 ReleaseStatus 枚举，需要用 value 比较
                         if release.status.value == 'success':
                             progress['status'] = 'completed'
+                            progress['message'] = release.message or '滚动更新成功完成，所有 Pod 均已 Running'
                             print(f"[WebSocket] Release {release_id} already success, forcing status=completed")
                         elif release.status.value == 'failed':
                             progress['status'] = 'failed'
                             progress['message'] = release.message or '发布失败'
                             print(f"[WebSocket] Release {release_id} already failed, forcing status=failed")
                         
+                        # 确保 pods 字段存在
+                        if 'pods' not in progress:
+                            progress['pods'] = []
+                        
                         print(f"[WebSocket] Sending progress for release {release_id}: status={progress.get('status')}, pods_count={len(progress.get('pods', []))}")
                         await websocket.send_json(progress)
                     else:
-                        print(f"[WebSocket] No pod_status for release {release_id}")
+                        print(f"[WebSocket] Release {release_id} not found")
                 finally:
                     await db.close()
             
