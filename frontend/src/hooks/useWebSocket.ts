@@ -13,6 +13,8 @@ export const useWebSocket = (url: string | null, options: UseWebSocketOptions = 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectCountRef = useRef(0)
   const maxReconnect = 5
+  // 使用 ref 存储是否应该重连的标记
+  const shouldReconnectRef = useRef(true)
   // 使用 ref 存储回调函数，避免依赖变化导致重连
   const optionsRef = useRef(options)
   optionsRef.current = options
@@ -22,6 +24,10 @@ export const useWebSocket = (url: string | null, options: UseWebSocketOptions = 
       setReadyState(WebSocket.CLOSED)
       return
     }
+
+    // 重置重连标记
+    shouldReconnectRef.current = true
+    reconnectCountRef.current = 0
 
     const connect = () => {
       console.log(`[WebSocket] Connecting to ${url}, reconnectCount: ${reconnectCountRef.current}`)
@@ -52,8 +58,8 @@ export const useWebSocket = (url: string | null, options: UseWebSocketOptions = 
         setReadyState(WebSocket.CLOSED)
         optionsRef.current.onDisconnect?.()
         
-        // 自动重连
-        if (reconnectCountRef.current < maxReconnect) {
+        // 自动重连（只有在 shouldReconnectRef 为 true 时才重连）
+        if (shouldReconnectRef.current && reconnectCountRef.current < maxReconnect) {
           reconnectCountRef.current++
           console.log(`[WebSocket] Reconnecting in 3s... (${reconnectCountRef.current}/${maxReconnect})`)
           setTimeout(connect, 3000)
@@ -75,6 +81,7 @@ export const useWebSocket = (url: string | null, options: UseWebSocketOptions = 
 
     return () => {
       console.log('[WebSocket] Cleanup - closing connection')
+      shouldReconnectRef.current = false
       wsRef.current?.close()
     }
   }, [url]) // 只依赖 url，避免频繁重连
@@ -87,6 +94,8 @@ export const useWebSocket = (url: string | null, options: UseWebSocketOptions = 
   }, [])
 
   const close = useCallback(() => {
+    console.log('[WebSocket] Manual close called, disabling reconnect')
+    shouldReconnectRef.current = false
     wsRef.current?.close()
   }, [])
 
