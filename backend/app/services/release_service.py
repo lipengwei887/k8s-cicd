@@ -198,7 +198,17 @@ class ReleaseService:
             # 更新发布记录
             release.status = ReleaseStatus.SUCCESS if result['success'] else ReleaseStatus.FAILED
             release.message = result['message']
-            release.pod_status = json.dumps(result.get('pod_status', [])) if result.get('pod_status') else None
+            # 保存 pod_status：成功/失败时都保存完整的进度信息（包含 pods 列表）
+            final_progress = {
+                'status': 'completed' if result['success'] else 'failed',
+                'message': result['message'],
+                'desired': result.get('ready_replicas', 0),
+                'ready': result.get('ready_replicas', 0),
+                'pods': result.get('pod_status', []),
+                'elapsed_seconds': result.get('duration', 0),
+                'progress_percent': 100 if result['success'] else 0
+            }
+            release.pod_status = json.dumps(final_progress)
             release.logs = result.get('logs', '')  # 保存 Pod 日志
             release.completed_at = datetime.utcnow()
             await self.db.commit()

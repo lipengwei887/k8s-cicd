@@ -43,7 +43,15 @@ const Dashboard: React.FC = () => {
     return `${protocol}//${host}/api/v1/releases/${selectedRelease.id}/progress`
   })() : null
   
-  useWebSocket(wsUrl, {
+  // 使用 ref 来跟踪是否已经显示过完成/失败消息，避免重复弹窗
+  const completedRef = React.useRef(false)
+  
+  // 当 selectedRelease 变化时重置完成标记
+  useEffect(() => {
+    completedRef.current = false
+  }, [selectedRelease?.id])
+  
+  const { close: closeWebSocket } = useWebSocket(wsUrl, {
     onConnect: () => {
       console.log('[Dashboard] WebSocket connected for release:', selectedRelease?.id)
     },
@@ -58,16 +66,26 @@ const Dashboard: React.FC = () => {
         elapsed: data.elapsed_seconds
       })
       setReleaseProgress(data)
-      if (data.status === 'completed') {
-        message.success('发布成功！')
-        // 更新 selectedRelease 状态为成功
-        setSelectedRelease((prev: any) => prev ? { ...prev, status: 'success' } : prev)
-        loadReleases(pagination.current, pagination.pageSize)
-      } else if (data.status === 'failed') {
-        message.error(`发布失败: ${data.message}`)
-        // 更新 selectedRelease 状态为失败
-        setSelectedRelease((prev: any) => prev ? { ...prev, status: 'failed' } : prev)
-        loadReleases(pagination.current, pagination.pageSize)
+      
+      // 只有第一次收到完成/失败消息时才弹窗并关闭 WebSocket
+      if (!completedRef.current) {
+        if (data.status === 'completed') {
+          completedRef.current = true
+          message.success('发布成功！')
+          // 更新 selectedRelease 状态为成功
+          setSelectedRelease((prev: any) => prev ? { ...prev, status: 'success' } : prev)
+          loadReleases(pagination.current, pagination.pageSize)
+          // 发布成功后关闭 WebSocket 连接
+          closeWebSocket()
+        } else if (data.status === 'failed') {
+          completedRef.current = true
+          message.error(`发布失败: ${data.message}`)
+          // 更新 selectedRelease 状态为失败
+          setSelectedRelease((prev: any) => prev ? { ...prev, status: 'failed' } : prev)
+          loadReleases(pagination.current, pagination.pageSize)
+          // 发布失败后关闭 WebSocket 连接
+          closeWebSocket()
+        }
       }
     },
   })
