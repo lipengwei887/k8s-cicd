@@ -180,7 +180,8 @@ class K8sService:
                 deployment_name=deployment_name,
                 timeout=timeout,
                 expected_generation=expected_generation,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                new_image=new_image
             )
             
             return {
@@ -215,7 +216,8 @@ class K8sService:
         deployment_name: str,
         timeout: int,
         expected_generation: int = 0,
-        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        new_image: str = None
     ) -> Dict[str, Any]:
         """等待滚动更新完成，包含 Pod 状态检查和失败检测"""
         client_mgr = await self._get_client()
