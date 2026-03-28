@@ -253,8 +253,8 @@ class K8sService:
                 available = status.available_replicas or 0
                 unavailable = status.unavailable_replicas or 0
                 
-                # 获取 Pod 详细状态
-                pod_status = await self._get_pods_status(namespace, deployment_name)
+                # 获取 Pod 详细状态（传入 new_image 过滤老版本 Pod）
+                pod_status = await self._get_pods_status(namespace, deployment_name, new_image)
                 
                 # 打印 Pod 状态日志
                 logger.info(f"[K8sClient] Pod status check: elapsed={elapsed:.1f}s, pods={[(p['name'], p['status'], p['ready']) for p in pod_status]}")
@@ -441,8 +441,14 @@ class K8sService:
             logger.error(f"Failed to get deployment status: {e}")
             raise K8sClientError(f"Failed to get status: {e.reason}")
     
-    async def _get_pods_status(self, namespace: str, deployment_name: str) -> list:
-        """获取 Deployment 关联的 Pod 状态列表"""
+    async def _get_pods_status(self, namespace: str, deployment_name: str, expected_image: str = None) -> list:
+        """获取 Deployment 关联的 Pod 状态列表
+        
+        Args:
+            namespace: 命名空间
+            deployment_name: Deployment 名称
+            expected_image: 期望的镜像版本（用于过滤，只返回匹配该镜像的 Pod）
+        """
         try:
             client_mgr = await self._get_client()
             apps_v1 = client_mgr.apps_v1
@@ -473,6 +479,15 @@ class K8sService:
                 
                 # 获取容器状态
                 container_statuses = pod.status.container_statuses or []
+                
+                # 检查 Pod 的容器镜像是否匹配期望镜像（如果提供了）
+                # 这用于在滚动更新时过滤掉老版本的 Pod
+                if expected_image and pod.spec.containers:
+                    pod_image = pod.spec.containers[0].image
+                    # 简化比较：只比较镜像名和标签
+                    if pod_image != expected_image:
+                        # 镜像不匹配，这是老版本的 Pod，跳过
+                        continue
                 
                 # 检查是否有等待状态的容器（如 ImagePullBackOff）
                 waiting_reason = None

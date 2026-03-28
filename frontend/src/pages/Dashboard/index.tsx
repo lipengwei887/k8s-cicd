@@ -734,8 +734,8 @@ const Dashboard: React.FC = () => {
                 />
               )}
       
-              {/* Pod 状态列表 */}
-              {displayPods.length > 0 && (
+              {/* Pod 状态列表 - 只在发布进行中或失败时显示，成功时隐藏 */}
+              {displayPods.length > 0 && (currentStatus === 'running' || currentStatus === 'updating' || currentStatus === 'failed') && (
                 <div style={{ marginBottom: 16 }}>
                   <h4 style={{ margin: '0 0 8px' }}>Pod 实时状态</h4>
                   <Table
