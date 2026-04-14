@@ -172,7 +172,7 @@ const Dashboard: React.FC = () => {
   }
 
   // 服务名称缓存，避免重复请求
-  const [serviceNamesMap, setServiceNamesMap] = useState<Record<number, { name: string; display_name: string }>>({})
+  const [serviceNamesMap, setServiceNamesMap] = useState<Record<number, { name: string; display_name: string; namespace_id: number; namespace_name: string }>>({})
 
   // 加载发布记录（支持分页）
   const loadReleases = async (page = 1, pageSize = 10) => {
@@ -374,6 +374,15 @@ const Dashboard: React.FC = () => {
       title: '服务',
       dataIndex: 'service_id',
       render: (serviceId: number) => getServiceName(serviceId),
+    },
+    {
+      title: '环境',
+      dataIndex: 'service_id',
+      width: 100,
+      render: (serviceId: number) => {
+        const service = serviceNamesMap[serviceId]
+        return service?.namespace_name || '-'
+      },
     },
     {
       title: '镜像标签',

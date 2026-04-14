@@ -105,7 +105,7 @@ async def get_service_names_batch(
 ):
     """
     批量获取服务名称（用于发布记录展示优化）
-    只返回 id、name、display_name 字段，避免加载大量数据
+    只返回 id、name、display_name、namespace_id、namespace_name 字段，避免加载大量数据
     """
     if not service_ids:
         return {}
@@ -113,19 +113,22 @@ async def get_service_names_batch(
     # 去重
     unique_ids = list(set(service_ids))
     
-    # 批量查询
+    # 批量查询，JOIN namespace 获取命名空间信息
     result = await db.execute(
-        select(Service.id, Service.name, Service.display_name)
+        select(Service.id, Service.name, Service.display_name, Service.namespace_id, Namespace.name, Namespace.display_name)
+        .join(Namespace, Service.namespace_id == Namespace.id)
         .where(Service.id.in_(unique_ids))
         .where(Service.status == 1)
     )
     
-    # 转换为字典 {id: {name, display_name}}
+    # 转换为字典 {id: {name, display_name, namespace_id, namespace_name}}
     services_map = {}
     for row in result.fetchall():
         services_map[row[0]] = {
             "name": row[1],
-            "display_name": row[2]
+            "display_name": row[2],
+            "namespace_id": row[3],
+            "namespace_name": row[4] or row[2]  # display_name 优先，否则用 name
         }
     
     return services_map
