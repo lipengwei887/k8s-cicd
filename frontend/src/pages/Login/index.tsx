@@ -4,6 +4,7 @@ import { UserOutlined, LockOutlined, EyeOutlined, EyeInvisibleOutlined } from '@
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '@/api'
 import { AnimatedCharacters } from '@/components/AnimatedLogin'
+import { setStoredCurrentUser } from '@/utils/auth'
 import './style.css'
 
 const Login: React.FC = () => {
@@ -33,6 +34,14 @@ const Login: React.FC = () => {
         sessionStorage.setItem('token', token)
         localStorage.removeItem('token')
         localStorage.removeItem('tokenExpiry')
+      }
+      try {
+        const me: any = await authApi.getMe()
+        setStoredCurrentUser(me)
+      } catch {
+        if (res.user) {
+          setStoredCurrentUser(res.user)
+        }
       }
       message.success('登录成功')
       navigate('/dashboard')

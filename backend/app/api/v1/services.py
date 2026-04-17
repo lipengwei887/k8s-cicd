@@ -4,6 +4,7 @@ from sqlalchemy import select, func
 from typing import List, Optional
 
 from app.database import get_db
+from app.core.authorization import require_permission
 from app.models.service import Service
 from app.models.namespace import Namespace
 from app.api.v1.auth import get_current_active_user
@@ -18,7 +19,7 @@ async def list_services(
     limit: int = 100,
     namespace_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:read"))
 ):
     """获取服务列表"""
     query = select(Service).where(Service.status == 1)
@@ -45,7 +46,7 @@ async def list_services(
 async def create_service(
     service_data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:create"))
 ):
     """创建服务"""
     db_service = Service(**service_data)
@@ -60,7 +61,7 @@ async def create_service(
 async def get_service(
     service_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:read"))
 ):
     """获取服务详情"""
     result = await db.execute(select(Service).where(Service.id == service_id))
@@ -76,7 +77,7 @@ async def get_service(
 async def get_service_images(
     service_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:read"))
 ):
     """获取服务的可用镜像版本 (从 Harbor)"""
     result = await db.execute(select(Service).where(Service.id == service_id))
@@ -101,7 +102,7 @@ async def get_service_images(
 async def get_service_names_batch(
     service_ids: List[int],
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:read"))
 ):
     """
     批量获取服务名称（用于发布记录展示优化）

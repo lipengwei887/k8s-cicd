@@ -5,11 +5,12 @@ from typing import List, Optional
 import yaml
 
 from app.database import get_db
+from app.core.authorization import require_permission
 from app.models.cluster import Cluster
 from app.models.namespace import Namespace
 from app.models.service import Service
 from app.schemas.cluster import ClusterCreate, ClusterUpdate, ClusterResponse, ClusterListResponse
-from app.api.v1.auth import get_current_active_user, require_admin
+from app.api.v1.auth import get_current_active_user
 from app.models.user import User, UserRole
 from app.core.security import secret_manager
 from app.services.k8s_sync_service import K8sSyncService
@@ -22,7 +23,7 @@ async def list_clusters(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:read"))
 ):
     """获取集群列表"""
     result = await db.execute(
@@ -41,7 +42,7 @@ async def list_clusters(
 async def create_cluster(
     cluster: ClusterCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:create"))
 ):
     """创建集群"""
     # 加密敏感信息
@@ -69,7 +70,7 @@ async def create_cluster(
 async def get_cluster(
     cluster_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:read"))
 ):
     """获取集群详情"""
     result = await db.execute(select(Cluster).where(Cluster.id == cluster_id))
@@ -86,7 +87,7 @@ async def update_cluster(
     cluster_id: int,
     cluster_update: ClusterUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:update"))
 ):
     """更新集群"""
     result = await db.execute(select(Cluster).where(Cluster.id == cluster_id))
@@ -109,7 +110,7 @@ async def update_cluster(
 async def delete_cluster(
     cluster_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:delete"))
 ):
     """删除集群"""
     result = await db.execute(select(Cluster).where(Cluster.id == cluster_id))
@@ -128,7 +129,7 @@ async def delete_cluster(
 async def get_cluster_namespaces(
     cluster_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:read"))
 ):
     """获取集群下的命名空间"""
     result = await db.execute(
@@ -139,11 +140,11 @@ async def get_cluster_namespaces(
     return {"items": namespaces}
 
 
-@router.post("/{cluster_id}/sync", dependencies=[Depends(require_admin)])
+@router.post("/{cluster_id}/sync")
 async def sync_cluster(
     cluster_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:update"))
 ):
     """
     同步集群信息
@@ -304,16 +305,12 @@ async def sync_cluster(
 async def upload_kubeconfig(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("cluster:create"))
 ):
     """
     上传 kubeconfig 文件创建集群
     自动解析 kubeconfig 并同步命名空间和服务
     """
-    # 检查权限
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
-    
     # 解析 multipart/form-data
     try:
         form = await request.form()

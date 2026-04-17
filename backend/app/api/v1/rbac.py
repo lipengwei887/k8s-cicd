@@ -8,6 +8,7 @@ from sqlalchemy import select, and_
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.core.authorization import require_permission
 from app.models.role import Role, RoleGroup, UserRole, RBACPermission, RolePermission, Organization, RoleType
 from app.models.user import User
 from app.services.rbac_service import RBACService
@@ -75,7 +76,7 @@ async def list_roles(
     role_type: Optional[str] = None,
     status: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """获取角色列表"""
     query = select(Role)
@@ -106,7 +107,7 @@ async def list_roles(
 async def get_role(
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """获取角色详情"""
     result = await db.execute(select(Role).where(Role.id == role_id))
@@ -140,7 +141,7 @@ async def get_role(
 async def create_role(
     data: RoleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """创建自定义角色"""
     rbac_service = RBACService(db)
@@ -175,7 +176,7 @@ async def update_role(
     role_id: int,
     data: RoleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """更新角色"""
     result = await db.execute(select(Role).where(Role.id == role_id))
@@ -229,7 +230,7 @@ async def update_role(
 async def delete_role(
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """删除角色"""
     result = await db.execute(select(Role).where(Role.id == role_id))
@@ -254,7 +255,7 @@ async def delete_role(
 async def list_permissions(
     resource_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """获取权限列表"""
     query = select(RBACPermission).where(RBACPermission.status == 1)
@@ -283,7 +284,7 @@ async def list_permissions(
 async def get_user_roles(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """获取用户的角色"""
     result = await db.execute(
@@ -308,7 +309,7 @@ async def get_user_roles(
 async def assign_role_to_user(
     data: UserRoleAssign,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """为用户分配角色"""
     rbac_service = RBACService(db)
@@ -330,7 +331,7 @@ async def remove_role_from_user(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """移除用户的角色"""
     rbac_service = RBACService(db)
@@ -343,7 +344,7 @@ async def remove_role_from_user(
 @router.get("/organizations")
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """获取组织列表"""
     result = await db.execute(
@@ -367,7 +368,7 @@ async def list_organizations(
 async def create_organization(
     data: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """创建组织"""
     # 检查编码是否已存在
@@ -432,7 +433,7 @@ async def check_permission(
 @router.get("/my-permissions")
 async def get_my_permissions(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """获取当前用户的所有权限"""
     rbac_service = RBACService(db)
@@ -453,7 +454,7 @@ async def get_my_permissions(
 @router.get("/role-groups")
 async def list_role_groups(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """获取角色组列表"""
     from app.models.role import RoleGroup
@@ -479,7 +480,7 @@ async def list_role_groups(
 async def create_role_group(
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:read"))
 ):
     """创建角色组"""
     from app.models.role import RoleGroup
@@ -514,7 +515,7 @@ async def create_role_group(
 async def get_role_group(
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """获取角色组详情"""
     from app.models.role import RoleGroup, RoleGroupService, RoleGroupNamespace
@@ -559,7 +560,7 @@ async def update_role_group(
     group_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """更新角色组"""
     from app.models.role import RoleGroup
@@ -590,7 +591,7 @@ async def update_role_group(
 async def delete_role_group(
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """删除角色组"""
     from app.models.role import RoleGroup
@@ -612,7 +613,7 @@ async def add_service_to_role_group(
     group_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """添加服务到角色组"""
     from app.models.role import RoleGroup, RoleGroupService
@@ -646,7 +647,7 @@ async def remove_service_from_role_group(
     group_id: int,
     service_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("role:manage"))
 ):
     """从角色组移除服务"""
     from app.models.role import RoleGroupService
@@ -672,7 +673,7 @@ async def add_namespace_to_role_group(
     group_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """添加命名空间到角色组"""
     from app.models.role import RoleGroup, RoleGroupNamespace
@@ -706,7 +707,7 @@ async def remove_namespace_from_role_group(
     group_id: int,
     namespace_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """从角色组移除命名空间"""
     from app.models.role import RoleGroupNamespace
@@ -732,7 +733,7 @@ async def assign_role_group_to_user(
     user_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """为用户分配角色组"""
     from app.models.role import RoleGroup, UserRoleGroup

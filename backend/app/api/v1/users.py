@@ -8,9 +8,10 @@ from sqlalchemy import select, func
 from typing import List, Optional
 
 from app.database import get_db
+from app.core.authorization import require_permission
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate, UserResponse
-from app.api.v1.auth import get_current_active_user, require_admin
+from app.api.v1.auth import get_current_active_user
 from app.core.security import get_password_hash
 from app.services.rbac_service import RBACService
 
@@ -23,7 +24,7 @@ async def list_users(
     limit: int = 100,
     role: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """获取用户列表"""
     query = select(User)
@@ -54,11 +55,11 @@ async def list_users(
     return {"items": user_list, "total": total}
 
 
-@router.post("", dependencies=[Depends(require_admin)], status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """创建用户 (管理员)"""
     # 检查用户名是否已存在
@@ -88,11 +89,11 @@ async def create_user(
     return new_user
 
 
-@router.get("/{user_id}", dependencies=[Depends(require_admin)])
+@router.get("/{user_id}")
 async def get_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """获取用户详情 (管理员)"""
     result = await db.execute(select(User).where(User.id == user_id))
@@ -104,12 +105,12 @@ async def get_user(
     return user
 
 
-@router.put("/{user_id}", dependencies=[Depends(require_admin)])
+@router.put("/{user_id}")
 async def update_user(
     user_id: int,
     user_data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """更新用户信息 (管理员)"""
     result = await db.execute(select(User).where(User.id == user_id))
@@ -136,11 +137,11 @@ async def update_user(
     return user
 
 
-@router.delete("/{user_id}", dependencies=[Depends(require_admin)])
+@router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """删除用户 (软删除) (管理员)"""
     result = await db.execute(select(User).where(User.id == user_id))
@@ -160,11 +161,11 @@ async def delete_user(
 
 
 # 用户角色管理 API (使用RBAC)
-@router.get("/{user_id}/roles", dependencies=[Depends(require_admin)])
+@router.get("/{user_id}/roles")
 async def get_user_roles(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """获取用户的RBAC角色列表"""
     from app.models.role import UserRole, Role
@@ -189,11 +190,11 @@ async def get_user_roles(
     return {"items": roles}
 
 
-@router.get("/{user_id}/permissions", dependencies=[Depends(require_admin)])
+@router.get("/{user_id}/permissions")
 async def get_user_permissions(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:read"))
 ):
     """获取用户的RBAC权限列表"""
     rbac_service = RBACService(db)
@@ -201,12 +202,12 @@ async def get_user_permissions(
     return {"items": permissions}
 
 
-@router.post("/{user_id}/roles/{role_id}", dependencies=[Depends(require_admin)])
+@router.post("/{user_id}/roles/{role_id}")
 async def assign_role_to_user(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """为用户分配角色"""
     rbac_service = RBACService(db)
@@ -218,12 +219,12 @@ async def assign_role_to_user(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{user_id}/roles/{role_id}", dependencies=[Depends(require_admin)])
+@router.delete("/{user_id}/roles/{role_id}")
 async def remove_role_from_user(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """移除用户的角色"""
     from app.models.role import UserRole

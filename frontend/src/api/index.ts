@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios'
 import type { ListResponse } from '@/types'
+import { clearAuthStorage } from '@/utils/auth'
 
 // 创建 axios 实例
 const api: AxiosInstance = axios.create({
@@ -32,10 +33,7 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      // 同时清除两处存储
-      localStorage.removeItem('token')
-      localStorage.removeItem('tokenExpiry')
-      sessionStorage.removeItem('token')
+      clearAuthStorage()
       window.location.href = '/login'
     } else if (error.response?.status === 403) {
       // 权限不足提示

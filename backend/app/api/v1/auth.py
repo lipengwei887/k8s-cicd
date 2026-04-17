@@ -8,6 +8,7 @@ from typing import Optional
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.schemas.user import UserLogin, Token, UserResponse
+from app.core.authorization import user_has_permission_code
 from app.core.security import verify_password, create_access_token, decode_access_token, get_password_hash
 from app.config import settings
 
@@ -264,9 +265,12 @@ async def logout(current_user: User = Depends(get_current_active_user)):
     return {"message": "Successfully logged out"}
 
 
-async def require_admin(current_user: User = Depends(get_current_active_user)) -> User:
-    """要求管理员权限"""
-    if current_user.role != UserRole.ADMIN:
+async def require_admin(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """兼容旧接口的管理员校验，内部已切换为 RBAC。"""
+    if not await user_has_permission_code(db, current_user, "user:manage"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin permission required"
@@ -274,9 +278,15 @@ async def require_admin(current_user: User = Depends(get_current_active_user)) -
     return current_user
 
 
-async def require_developer_or_above(current_user: User = Depends(get_current_active_user)) -> User:
-    """要求开发人员或更高权限"""
-    if current_user.role not in [UserRole.ADMIN, UserRole.DEVELOPER]:
+async def require_developer_or_above(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """兼容旧接口的开发权限校验，内部已切换为 RBAC。"""
+    has_release_create = await user_has_permission_code(db, current_user, "release:create")
+    has_user_manage = await user_has_permission_code(db, current_user, "user:manage")
+
+    if not (has_release_create or has_user_manage):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Developer permission required"

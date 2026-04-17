@@ -245,21 +245,24 @@ class RBACService:
             # 检查权限匹配
             if perm["resource_type"] == resource_type and perm["action"] in [action, "*"]:
                 # 检查数据范围
-                if perm["scope_type"] == "all":
+                scope_type = (perm["scope_type"] or "all").lower()
+                if scope_type == "all":
                     return True
-                elif perm["scope_type"] == "self":
-                    # 只能操作自己的数据
-                    return True  # 需要在外层检查资源归属
-                elif perm["scope_type"] == "org":
-                    # 同一组织
-                    return True  # 需要在外层检查组织
-                elif perm["scope_type"] == "assigned":
-                    # 检查是否被分配了该资源
+                elif scope_type in {"assigned", "team"}:
                     if resource_id:
-                        # TODO: 检查资源分配表
-                        return True
+                        has_access = await self.check_user_role_group_access(
+                            user_id,
+                            service_id=resource_id,
+                        )
+                        if has_access:
+                            return True
                     else:
-                        # 没有指定资源ID，默认允许（后续在具体资源操作时检查）
+                        # 列表/无资源上下文场景，只校验用户至少拥有权限码
+                        return True
+                elif scope_type in {"self", "org"}:
+                    # 兼容旧接口：当缺少资源上下文时仅判定拥有该权限码，
+                    # 具体资源归属由新的统一授权层负责。
+                    if resource_id is None:
                         return True
         
         return False

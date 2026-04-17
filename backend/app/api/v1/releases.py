@@ -15,6 +15,7 @@ from app.schemas.release import (
     ReleaseApprove, ReleaseProgress
 )
 from app.api.v1.auth import get_current_active_user
+from app.core.authorization import ResourceContext, ensure_permission, require_permission
 from app.models.user import User
 from app.services.release_service import ReleaseService
 from app.services.rbac_service import RBACService
@@ -33,53 +34,6 @@ async def _run_release_in_background(release_id: int, operator_id: int):
             await release_service.execute_release(release_id, operator_id)
         except Exception as e:
             logger.error(f"Background release {release_id} failed: {e}")
-
-# 权限码中文映射
-PERMISSION_NAMES = {
-    "release:create": "创建发布",
-    "release:execute": "执行发布",
-    "release:rollback": "回滚发布",
-    "release:read": "查看发布",
-    "release:approve": "审批发布",
-    "service:create": "创建服务",
-    "service:update": "编辑服务",
-    "service:delete": "删除服务",
-    "service:read": "查看服务",
-    "service:deploy": "部署服务",
-    "cluster:create": "创建集群",
-    "cluster:update": "编辑集群",
-    "cluster:delete": "删除集群",
-    "cluster:read": "查看集群",
-    "namespace:create": "创建命名空间",
-    "namespace:update": "编辑命名空间",
-    "namespace:delete": "删除命名空间",
-    "namespace:read": "查看命名空间",
-    "user:create": "创建用户",
-    "user:update": "编辑用户",
-    "user:delete": "删除用户",
-    "user:read": "查看用户",
-    "role:create": "创建角色",
-    "role:update": "编辑角色",
-    "role:delete": "删除角色",
-    "role:read": "查看角色",
-}
-
-# 权限检查依赖
-def require_permission(permission_code: str):
-    async def check_permission(
-        current_user: User = Depends(get_current_active_user),
-        db: AsyncSession = Depends(get_db)
-    ) -> User:
-        rbac_service = RBACService(db)
-        has_perm = await rbac_service.check_permission(current_user.id, permission_code)
-        if not has_perm:
-            perm_name = PERMISSION_NAMES.get(permission_code, permission_code)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"没有权限：{perm_name}"
-            )
-        return current_user
-    return check_permission
 
 router = APIRouter()
 
@@ -116,7 +70,7 @@ async def list_releases(
     service_id: Optional[int] = None,
     status: Optional[ReleaseStatus] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("release:read"))
 ):
     """
     获取发布记录列表
@@ -191,9 +145,6 @@ async def create_release(
     current_user: User = Depends(require_permission("release:create"))
 ):
     """创建发布单"""
-    # 检查用户是否有权限操作此服务（通过角色组）
-    rbac_service = RBACService(db)
-    
     # 获取服务信息
     result = await db.execute(select(Service).where(Service.id == release.service_id))
     service = result.scalar_one_or_none()
@@ -201,18 +152,12 @@ async def create_release(
     if not service:
         raise HTTPException(status_code=404, detail="服务不存在")
     
-    # 检查角色组权限（超级管理员跳过）
-    if not current_user.is_superuser:
-        has_access = await rbac_service.check_user_role_group_access(
-            current_user.id, 
-            service_id=release.service_id,
-            namespace_id=service.namespace_id
-        )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="没有权限：您不属于该服务或命名空间的发布组"
-            )
+    await ensure_permission(
+        db,
+        current_user,
+        "release:create",
+        ResourceContext(service_id=release.service_id, namespace_id=service.namespace_id),
+    )
     
     release_service = ReleaseService(db)
     db_release = await release_service.create_release(
@@ -262,6 +207,13 @@ async def get_release(
     
     if not release:
         raise HTTPException(status_code=404, detail="Release not found")
+
+    await ensure_permission(
+        db,
+        current_user,
+        "release:read",
+        ResourceContext(owner_user_id=release.operator_id, service_id=release.service_id),
+    )
     
     # 手动构建响应数据
     return {
@@ -300,7 +252,6 @@ async def execute_release(
     """执行发布"""
     # 检查用户是否有权限操作此发布（通过角色组）
     release_service = ReleaseService(db)
-    rbac_service = RBACService(db)
     
     # 获取发布记录
     result = await db.execute(select(ReleaseRecord).where(ReleaseRecord.id == release_id))
@@ -309,17 +260,12 @@ async def execute_release(
     if not release:
         raise HTTPException(status_code=404, detail="发布记录不存在")
     
-    # 检查角色组权限（超级管理员跳过）
-    if not current_user.is_superuser:
-        has_access = await rbac_service.check_user_role_group_access(
-            current_user.id, 
-            service_id=release.service_id
-        )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="没有权限：您不属于该服务的发布组"
-            )
+    await ensure_permission(
+        db,
+        current_user,
+        "release:execute",
+        ResourceContext(owner_user_id=release.operator_id, service_id=release.service_id),
+    )
     
     # 检查发布单状态
     if release.status != ReleaseStatus.PENDING:
@@ -362,6 +308,19 @@ async def rollback_release(
     current_user: User = Depends(get_current_active_user)
 ):
     """回滚发布"""
+    result = await db.execute(select(ReleaseRecord).where(ReleaseRecord.id == release_id))
+    release = result.scalar_one_or_none()
+
+    if not release:
+        raise HTTPException(status_code=404, detail="发布记录不存在")
+
+    await ensure_permission(
+        db,
+        current_user,
+        "release:rollback",
+        ResourceContext(owner_user_id=release.operator_id, service_id=release.service_id),
+    )
+
     release_service = ReleaseService(db)
     
     try:
@@ -386,6 +345,13 @@ async def approve_release(
     
     if not release:
         raise HTTPException(status_code=404, detail="Release not found")
+
+    await ensure_permission(
+        db,
+        current_user,
+        "release:approve",
+        ResourceContext(owner_user_id=release.operator_id, service_id=release.service_id),
+    )
     
     if release.status != ReleaseStatus.APPROVING:
         raise HTTPException(status_code=400, detail="Release is not waiting for approval")
@@ -512,7 +478,6 @@ async def reexecute_release(
     基于已有的父发布单创建新的发布记录，无需再次审批
     """
     release_service = ReleaseService(db)
-    rbac_service = RBACService(db)
     
     # 检查父发布单是否可以在时效内免审批执行
     parent_release = await release_service.check_validity_for_reexecution(
@@ -533,18 +498,12 @@ async def reexecute_release(
     if not service:
         raise HTTPException(status_code=404, detail="服务不存在")
     
-    # 检查角色组权限（超级管理员跳过）
-    if not current_user.is_superuser:
-        has_access = await rbac_service.check_user_role_group_access(
-            current_user.id, 
-            service_id=release_data.service_id,
-            namespace_id=service.namespace_id
-        )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="没有权限：您不属于该服务或命名空间的发布组"
-            )
+    await ensure_permission(
+        db,
+        current_user,
+        "release:create",
+        ResourceContext(service_id=release_data.service_id, namespace_id=service.namespace_id),
+    )
     
     # 确保是同一服务
     if release_data.service_id != parent_release.service_id:
@@ -605,6 +564,13 @@ async def check_release_validity(
     
     if not release:
         raise HTTPException(status_code=404, detail="Release not found")
+
+    await ensure_permission(
+        db,
+        current_user,
+        "release:read",
+        ResourceContext(owner_user_id=release.operator_id, service_id=release.service_id),
+    )
     
     # 检查是否是同一用户
     is_owner = release.operator_id == current_user.id

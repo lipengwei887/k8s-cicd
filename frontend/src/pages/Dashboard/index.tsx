@@ -6,6 +6,7 @@ import { releaseApi, clusterApi, serviceApi, authApi, userApi, harborApi } from 
 import StatCard from '@/components/StatCard'
 import StatusBadge from '@/components/StatusBadge'
 import useWebSocket from '@/hooks/useWebSocket'
+import { clearAuthStorage, hasAnyPermission, hasPermission, setStoredCurrentUser } from '@/utils/auth'
 import '@/styles/design-system.css'
 
 const Dashboard: React.FC = () => {
@@ -108,18 +109,19 @@ const Dashboard: React.FC = () => {
     try {
       const res: any = await authApi.getMe()
       setCurrentUser(res)
+      setStoredCurrentUser(res)
     } catch (error) {
       console.error('获取用户信息失败', error)
     }
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('token')
+    clearAuthStorage()
     navigate('/login')
   }
 
   const userMenuItems = [
-    ...(currentUser?.role === 'admin' ? [
+    ...(hasAnyPermission(currentUser, ['cluster:read', 'user:read', 'role:read', 'role:manage', 'user:manage']) ? [
       {
         key: 'admin',
         icon: <SettingOutlined />,
@@ -444,7 +446,7 @@ const Dashboard: React.FC = () => {
       key: 'action',
       render: (_: any, record: any) => (
         <Space>
-          {record.status === 'approving' && currentUser?.role === 'admin' && (
+          {record.status === 'approving' && hasPermission(currentUser, 'release:approve') && (
             <>
               <Button
                 size="small"
@@ -464,7 +466,7 @@ const Dashboard: React.FC = () => {
               </Button>
             </>
           )}
-          {record.status === 'pending' && (currentUser?.is_superuser || currentUser?.permissions?.includes('release:execute')) && (
+          {record.status === 'pending' && hasPermission(currentUser, 'release:execute') && (
             <Button
               size="small"
               type="primary"

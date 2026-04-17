@@ -1,3 +1,4 @@
+import React from 'react'
 import { Layout, Menu, Button } from 'antd'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import {
@@ -9,54 +10,94 @@ import {
   KeyOutlined,
   GroupOutlined,
 } from '@ant-design/icons'
+import { authApi } from '@/api'
+import { getStoredCurrentUser, hasAnyPermission, setStoredCurrentUser, type AuthUser } from '@/utils/auth'
 
 const { Sider, Content } = Layout
 
 const AdminLayout: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(getStoredCurrentUser())
+
+  React.useEffect(() => {
+    let mounted = true
+
+    const loadCurrentUser = async () => {
+      try {
+        const me: any = await authApi.getMe()
+        setStoredCurrentUser(me)
+        if (mounted) {
+          setCurrentUser(me)
+        }
+      } catch {
+        if (mounted) {
+          setCurrentUser(getStoredCurrentUser())
+        }
+      }
+    }
+
+    loadCurrentUser()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   const menuItems = [
     {
       key: '/admin/clusters',
       icon: <ClusterOutlined />,
       label: '集群管理',
+      visible: hasAnyPermission(currentUser, ['cluster:read', 'cluster:create', 'cluster:update', 'cluster:delete']),
     },
     {
       key: '/admin/users',
       icon: <TeamOutlined />,
       label: '人员管理',
+      visible: hasAnyPermission(currentUser, ['user:read', 'user:manage']),
     },
     {
       key: 'rbac',
       icon: <SafetyOutlined />,
       label: '权限管理',
+      visible: hasAnyPermission(currentUser, ['role:read', 'role:manage', 'user:read', 'user:manage']),
       children: [
         {
           key: '/admin/roles',
           icon: <KeyOutlined />,
           label: '角色管理',
+          visible: hasAnyPermission(currentUser, ['role:read', 'role:manage']),
         },
         {
           key: '/admin/user-roles',
           icon: <UserOutlined />,
           label: '用户角色',
+          visible: hasAnyPermission(currentUser, ['user:read', 'user:manage']),
         },
         {
           key: '/admin/permissions',
           icon: <SafetyOutlined />,
           label: '权限配置',
+          visible: hasAnyPermission(currentUser, ['role:read', 'role:manage']),
         },
         {
           key: '/admin/role-groups',
           icon: <GroupOutlined />,
           label: '角色组管理',
+          visible: hasAnyPermission(currentUser, ['role:read', 'role:manage']),
         },
       ]
     },
   ]
 
-  const selectedKey = menuItems.find(item => location.pathname.startsWith(item.key))?.key || '/admin/clusters'
+  const visibleMenuItems = menuItems
+    .filter(item => item.visible !== false)
+    .map(item => item.children ? { ...item, children: item.children.filter(child => child.visible !== false) } : item)
+    .filter(item => !item.children || item.children.length > 0)
+
+  const selectedKey = visibleMenuItems
+    .flatMap(item => item.children ? item.children : [item])
+    .find(item => location.pathname.startsWith(item.key))?.key || visibleMenuItems[0]?.key || ''
 
   return (
     <Layout style={{ minHeight: 'calc(100vh - 48px)' }}>
@@ -73,7 +114,7 @@ const AdminLayout: React.FC = () => {
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
-          items={menuItems}
+          items={visibleMenuItems}
           onClick={({ key }) => navigate(key)}
           style={{ borderRight: 0 }}
         />

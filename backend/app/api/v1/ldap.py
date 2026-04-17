@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.core.authorization import require_permission, user_has_permission_code
 from app.models.user import User
-from app.api.v1.auth import get_current_active_user, require_admin
+from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.services.ldap_service import ldap_service, LDAPServiceError
 
@@ -16,6 +17,7 @@ router = APIRouter()
 
 @router.get("/status")
 async def get_ldap_status(
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -23,7 +25,7 @@ async def get_ldap_status(
     
     普通用户可查看是否启用，管理员可查看详细配置（脱敏）
     """
-    is_admin = current_user.is_superuser or current_user.role.value == "admin"
+    is_admin = await user_has_permission_code(db, current_user, "user:manage")
     
     response = {
         "enabled": settings.LDAP_ENABLED,
@@ -41,7 +43,7 @@ async def get_ldap_status(
 
 @router.post("/test-connection")
 async def test_ldap_connection(
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """
     测试 LDAP 连接（仅管理员）
@@ -82,7 +84,7 @@ async def test_ldap_connection(
 @router.post("/test-user")
 async def test_ldap_user(
     username: str,
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """
     测试 LDAP 用户查询（仅管理员）
@@ -123,7 +125,7 @@ async def test_ldap_user(
 
 @router.get("/config")
 async def get_ldap_config(
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_permission("user:manage"))
 ):
     """
     获取 LDAP 配置（仅管理员，密码脱敏）
