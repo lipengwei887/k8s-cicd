@@ -3,6 +3,7 @@
 创建管理员账号和测试数据
 """
 import asyncio
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal, engine, Base
 from app.models.user import User
@@ -13,6 +14,7 @@ from app.models.user import UserRole
 from app.models.namespace import EnvType
 from app.models.service import ServiceType
 from app.models.role import RBACPermission
+from app.services.rbac_service import RBACService
 from app.core.security import get_password_hash
 
 
@@ -30,7 +32,6 @@ async def init_database():
 async def create_admin_user(db: AsyncSession):
     """创建管理员账号"""
     # 检查是否已存在
-    from sqlalchemy import select
     result = await db.execute(select(User).where(User.username == "admin"))
     existing = result.scalar_one_or_none()
     if existing:
@@ -54,101 +55,142 @@ async def init_permissions(db: AsyncSession):
     """初始化权限数据"""
     from sqlalchemy import select
     
-    # 检查是否已有权限数据
-    result = await db.execute(select(RBACPermission))
-    existing = result.scalars().all()
-    if existing:
-        print("⚠️ 权限数据已存在")
-        return
-    
     # 定义权限列表
     permissions = [
         # 集群管理
-        RBACPermission(name="集群管理", code="cluster:read", permission_type="api", resource_type="cluster", action="read", status=1),
-        RBACPermission(name="创建集群", code="cluster:create", permission_type="api", resource_type="cluster", action="create", status=1),
-        RBACPermission(name="编辑集群", code="cluster:update", permission_type="api", resource_type="cluster", action="update", status=1),
-        RBACPermission(name="删除集群", code="cluster:delete", permission_type="api", resource_type="cluster", action="delete", status=1),
+        {"name": "集群管理", "code": "cluster:read", "resource_type": "cluster", "action": "read"},
+        {"name": "创建集群", "code": "cluster:create", "resource_type": "cluster", "action": "create"},
+        {"name": "编辑集群", "code": "cluster:update", "resource_type": "cluster", "action": "update"},
+        {"name": "删除集群", "code": "cluster:delete", "resource_type": "cluster", "action": "delete"},
         # 命名空间管理
-        RBACPermission(name="命名空间管理", code="namespace:read", permission_type="api", resource_type="namespace", action="read", status=1),
-        RBACPermission(name="创建命名空间", code="namespace:create", permission_type="api", resource_type="namespace", action="create", status=1),
-        RBACPermission(name="编辑命名空间", code="namespace:update", permission_type="api", resource_type="namespace", action="update", status=1),
-        RBACPermission(name="删除命名空间", code="namespace:delete", permission_type="api", resource_type="namespace", action="delete", status=1),
+        {"name": "命名空间管理", "code": "namespace:read", "resource_type": "namespace", "action": "read"},
+        {"name": "创建命名空间", "code": "namespace:create", "resource_type": "namespace", "action": "create"},
+        {"name": "编辑命名空间", "code": "namespace:update", "resource_type": "namespace", "action": "update"},
+        {"name": "删除命名空间", "code": "namespace:delete", "resource_type": "namespace", "action": "delete"},
+        {"name": "命名空间全部操作", "code": "namespace:*", "resource_type": "namespace", "action": "*"},
         # 服务管理
-        RBACPermission(name="服务管理", code="service:read", permission_type="api", resource_type="service", action="read", status=1),
-        RBACPermission(name="创建服务", code="service:create", permission_type="api", resource_type="service", action="create", status=1),
-        RBACPermission(name="编辑服务", code="service:update", permission_type="api", resource_type="service", action="update", status=1),
-        RBACPermission(name="删除服务", code="service:delete", permission_type="api", resource_type="service", action="delete", status=1),
-        RBACPermission(name="部署服务", code="service:deploy", permission_type="api", resource_type="service", action="deploy", status=1),
-        RBACPermission(name="服务配置", code="service:config", permission_type="api", resource_type="service", action="config", status=1),
+        {"name": "服务管理", "code": "service:read", "resource_type": "service", "action": "read"},
+        {"name": "创建服务", "code": "service:create", "resource_type": "service", "action": "create"},
+        {"name": "编辑服务", "code": "service:update", "resource_type": "service", "action": "update"},
+        {"name": "删除服务", "code": "service:delete", "resource_type": "service", "action": "delete"},
+        {"name": "部署服务", "code": "service:deploy", "resource_type": "service", "action": "deploy"},
+        {"name": "服务配置", "code": "service:config", "resource_type": "service", "action": "config"},
+        {"name": "服务全部操作", "code": "service:*", "resource_type": "service", "action": "*"},
         # 发布管理
-        RBACPermission(name="发布管理", code="release:read", permission_type="api", resource_type="release", action="read", status=1),
-        RBACPermission(name="创建发布", code="release:create", permission_type="api", resource_type="release", action="create", status=1),
-        RBACPermission(name="执行发布", code="release:execute", permission_type="api", resource_type="release", action="execute", status=1),
-        RBACPermission(name="审批发布", code="release:approve", permission_type="api", resource_type="release", action="approve", status=1),
-        RBACPermission(name="回滚发布", code="release:rollback", permission_type="api", resource_type="release", action="rollback", status=1),
+        {"name": "发布管理", "code": "release:read", "resource_type": "release", "action": "read"},
+        {"name": "创建发布", "code": "release:create", "resource_type": "release", "action": "create"},
+        {"name": "执行发布", "code": "release:execute", "resource_type": "release", "action": "execute"},
+        {"name": "审批发布", "code": "release:approve", "resource_type": "release", "action": "approve"},
+        {"name": "回滚发布", "code": "release:rollback", "resource_type": "release", "action": "rollback"},
+        {"name": "发布全部操作", "code": "release:*", "resource_type": "release", "action": "*"},
         # 用户管理
-        RBACPermission(name="用户管理", code="user:read", permission_type="api", resource_type="user", action="read", status=1),
-        RBACPermission(name="用户管理", code="user:manage", permission_type="api", resource_type="user", action="manage", status=1),
+        {"name": "用户管理", "code": "user:read", "resource_type": "user", "action": "read"},
+        {"name": "用户管理", "code": "user:manage", "resource_type": "user", "action": "manage"},
+        {"name": "用户全部操作", "code": "user:*", "resource_type": "user", "action": "*"},
         # 角色管理
-        RBACPermission(name="角色管理", code="role:read", permission_type="api", resource_type="role", action="read", status=1),
-        RBACPermission(name="角色管理", code="role:manage", permission_type="api", resource_type="role", action="manage", status=1),
+        {"name": "角色管理", "code": "role:read", "resource_type": "role", "action": "read"},
+        {"name": "角色管理", "code": "role:manage", "resource_type": "role", "action": "manage"},
+        {"name": "角色全部操作", "code": "role:*", "resource_type": "role", "action": "*"},
     ]
     
-    for perm in permissions:
-        db.add(perm)
-    await db.commit()
-    print(f"✅ 权限数据初始化完成: {len(permissions)} 个")
+    added_count = 0
+    for perm_data in permissions:
+        result = await db.execute(
+            select(RBACPermission).where(RBACPermission.code == perm_data["code"])
+        )
+        existing = result.scalar_one_or_none()
+        if not existing:
+            perm = RBACPermission(
+                name=perm_data["name"],
+                code=perm_data["code"],
+                permission_type="api",
+                resource_type=perm_data["resource_type"],
+                action=perm_data["action"],
+                status=1
+            )
+            db.add(perm)
+            added_count += 1
+    
+    if added_count > 0:
+        await db.commit()
+        print(f"✅ 新增权限数据: {added_count} 个")
+    else:
+        print("⚠️ 权限数据已存在")
 
 
 async def create_test_data(db: AsyncSession):
     """创建测试数据"""
-    # 创建集群
-    cluster = Cluster(
-        name="test",
-        display_name="临时测试集群",
-        api_server="https://kubernetes.default.svc",
-        status=1,
-        description="测试环境集群"
-    )
-    db.add(cluster)
-    await db.commit()
-    await db.refresh(cluster)
+    from sqlalchemy import select
+    
+    # 检查集群是否已存在
+    result = await db.execute(select(Cluster).where(Cluster.name == "test"))
+    cluster = result.scalar_one_or_none()
+    if not cluster:
+        cluster = Cluster(
+            name="test",
+            display_name="临时测试集群",
+            api_server="https://kubernetes.default.svc",
+            status=1,
+            description="测试环境集群"
+        )
+        db.add(cluster)
+        await db.commit()
+        await db.refresh(cluster)
     print(f"✅ 集群创建完成: {cluster.name}")
     
-    # 创建命名空间
-    namespaces = [
-        Namespace(cluster_id=cluster.id, name="tczxc-prod-a", display_name="生产环境A", env_type=EnvType.PROD, status=1),
-        Namespace(cluster_id=cluster.id, name="tczxc-prod-b", display_name="生产环境B", env_type=EnvType.PROD, status=1),
-        Namespace(cluster_id=cluster.id, name="tczxc-test", display_name="测试环境", env_type=EnvType.TEST, status=1),
-        Namespace(cluster_id=cluster.id, name="tczxc-dev", display_name="开发环境", env_type=EnvType.DEV, status=1),
-    ]
+    # 检查命名空间是否已存在
+    result = await db.execute(select(Namespace).where(Namespace.cluster_id == cluster.id))
+    namespaces = list(result.scalars().all())
+    
+    if len(namespaces) < 4:
+        ns_names = ["tczxc-prod-a", "tczxc-prod-b", "tczxc-test", "tczxc-dev"]
+        ns_display = ["生产环境A", "生产环境B", "测试环境", "开发环境"]
+        env_types = [EnvType.PROD, EnvType.PROD, EnvType.TEST, EnvType.DEV]
+        
+        for i, name in enumerate(ns_names):
+            result = await db.execute(select(Namespace).where(
+                and_(Namespace.cluster_id == cluster.id, Namespace.name == name)
+            ))
+            ns = result.scalar_one_or_none()
+            if not ns:
+                ns = Namespace(
+                    cluster_id=cluster.id, name=name, 
+                    display_name=ns_display[i], 
+                    env_type=env_types[i], status=1
+                )
+                db.add(ns)
+                await db.flush()
+                namespaces.append(ns)
+        
+        await db.commit()
+    
+    # 刷新获取命名空间 ID
     for ns in namespaces:
-        db.add(ns)
-    await db.commit()
+        await db.refresh(ns)
     print(f"✅ 命名空间创建完成: {len(namespaces)} 个")
     
     # 创建服务
     services = [
         Service(
-            namespace_id=1, name="user-service", display_name="用户服务",
+            namespace_id=namespaces[0].id, name="user-service", display_name="用户服务",
             type=ServiceType.DEPLOYMENT, deploy_name="user-service",
             container_name="user-service", harbor_project="tczxc", harbor_repo="user-service",
             port=8080, replicas=3, status=1
         ),
         Service(
-            namespace_id=1, name="order-service", display_name="订单服务",
+            namespace_id=namespaces[0].id, name="order-service", display_name="订单服务",
             type=ServiceType.DEPLOYMENT, deploy_name="order-service",
             container_name="order-service", harbor_project="tczxc", harbor_repo="order-service",
             port=8080, replicas=3, status=1
         ),
         Service(
-            namespace_id=1, name="payment-service", display_name="支付服务",
+            namespace_id=namespaces[0].id, name="payment-service", display_name="支付服务",
             type=ServiceType.DEPLOYMENT, deploy_name="payment-service",
             container_name="payment-service", harbor_project="tczxc", harbor_repo="payment-service",
             port=8080, replicas=2, status=1
         ),
         Service(
-            namespace_id=3, name="test-app", display_name="测试应用",
+            namespace_id=namespaces[2].id, name="test-app", display_name="测试应用",
             type=ServiceType.DEPLOYMENT, deploy_name="test-app",
             container_name="test-app", harbor_project="tczxc", harbor_repo="test-app",
             port=8080, replicas=1, status=1
@@ -209,6 +251,21 @@ async def main():
         try:
             await create_admin_user(db)
             await init_permissions(db)
+            
+            # 初始化系统角色和权限关联
+            rbac_service = RBACService(db)
+            
+            # 检查角色是否已存在
+            from sqlalchemy import select
+            from app.models.role import Role, RoleType
+            result = await db.execute(select(Role).where(Role.role_type == RoleType.SYSTEM))
+            existing_roles = result.scalars().all()
+            
+            if not existing_roles:
+                await rbac_service.init_system_roles()
+            else:
+                print("⚠️ 系统角色已存在")
+            
             await create_test_data(db)
             print("\n✨ 数据库初始化完成!")
             print("\n登录信息:")

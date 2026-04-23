@@ -2,7 +2,7 @@ import asyncio
 import logging
 import tempfile
 from typing import Optional, Dict, Any, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
@@ -192,6 +192,7 @@ class K8sService:
                 'new_image': new_image,
                 'replicas': updated_deployment.spec.replicas,
                 'ready_replicas': result.get('ready_replicas', 0),
+                'desired_replicas': result.get('desired_replicas', updated_deployment.spec.replicas),
                 'message': result.get('message', ''),
                 'duration': result.get('duration', 0)
             }
@@ -225,10 +226,31 @@ class K8sService:
         core_v1 = client_mgr.core_v1
         
         start_time = asyncio.get_event_loop().time()
+        rollout_started_at = datetime.utcnow().replace(tzinfo=timezone.utc)
         check_interval = 3  # 检查间隔(秒)
         consecutive_failures = 0  # 连续失败计数
         max_consecutive_failures = 3  # 最大连续失败次数
+        transient_failed_pod_checks = 0  # Pod 瞬时失败计数（用于避免误判）
+        progress_deadline_exceeded_checks = 0  # ProgressDeadlineExceeded 连续出现计数
+        max_transient_failure_checks = 3  # 连续命中阈值才判定失败
         min_wait_seconds = 5  # 最少等待5秒才允许判断成功，防止旧状态误判
+
+        # 基于探针配置动态计算 ready<desired 的失败观察窗口，避免启动慢服务被误判
+        not_ready_failure_grace_seconds = 30
+        try:
+            deployment_obj = await asyncio.to_thread(
+                apps_v1.read_namespaced_deployment,
+                name=deployment_name,
+                namespace=namespace
+            )
+            probe_grace = self._calculate_probe_grace_seconds(deployment_obj)
+            if probe_grace > not_ready_failure_grace_seconds:
+                not_ready_failure_grace_seconds = probe_grace
+        except Exception as e:
+            logger.warning(
+                f"Failed to read deployment probe config for {deployment_name}: {e}; "
+                f"fallback grace={not_ready_failure_grace_seconds}s"
+            )
         
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
@@ -272,50 +294,7 @@ class K8sService:
                     'status': 'updating',
                     'pods': pod_status
                 }
-                
-                # 检查是否有 Pod 启动失败（CrashLoopBackOff / ImagePullBackOff 等）
-                failed_pods = [p for p in pod_status if p.get('status') in ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled']]
-                if failed_pods:
-                    failure_reason = await self._get_failure_reason(namespace, deployment_name)
-                    logs = await self._get_failed_pods_logs(namespace, deployment_name, failed_pods)
-                    progress['status'] = 'failed'
-                    progress['message'] = failure_reason
-                    progress['failed_pods'] = failed_pods
-                    progress['logs'] = logs
-                    if progress_callback:
-                        await progress_callback(progress)
-                    return {
-                        'success': False,
-                        'message': failure_reason,
-                        'ready_replicas': ready,
-                        'duration': int(elapsed),
-                        'failed_pods': failed_pods,
-                        'logs': logs
-                    }
-                
-                # 检查 Deployment conditions
-                conditions = status.conditions or []
-                progressing = next(
-                    (c for c in conditions if c.type == 'Progressing'),
-                    None
-                )
-                
-                if progressing and progressing.reason == 'ProgressDeadlineExceeded':
-                    failure_reason = await self._get_failure_reason(namespace, deployment_name)
-                    logs = await self._get_failed_pods_logs(namespace, deployment_name)
-                    progress['status'] = 'failed'
-                    progress['message'] = failure_reason or 'Progress deadline exceeded'
-                    progress['logs'] = logs
-                    if progress_callback:
-                        await progress_callback(progress)
-                    return {
-                        'success': False,
-                        'message': failure_reason or 'Rolling update failed: progress deadline exceeded',
-                        'ready_replicas': ready,
-                        'duration': int(elapsed),
-                        'logs': logs
-                    }
-                
+
                 # 成功判定：必须有 Pod 且所有 Pod 都 Running+Ready 才算成功
                 # 同时要求 observedGeneration >= expected_generation，确认 K8s 已处理此次更新
                 # 且至少等待 min_wait_seconds 秒，防止旧 Pod 还未被替换就误判成功
@@ -331,23 +310,99 @@ class K8sService:
                     progress['status'] = 'completed'
                     if progress_callback:
                         await progress_callback(progress)
-                    
+
                     logs = await self._get_pods_logs(namespace, deployment_name, tail_lines=50)
-                    
+
                     return {
                         'success': True,
                         'message': '滚动更新成功完成，所有 Pod 均已 Running',
                         'ready_replicas': ready,
+                        'desired_replicas': desired,
                         'duration': int(elapsed),
                         'pod_status': pod_status,
                         'logs': logs
                     }
                 
+                # 检查是否有 Pod 启动失败（CrashLoopBackOff / ImagePullBackOff 等）
+                failed_pods = [p for p in pod_status if p.get('status') in ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled']]
+                if failed_pods:
+                    transient_failed_pod_checks += 1
+                    failure_reason = await self._get_failure_reason(
+                        namespace,
+                        deployment_name,
+                        release_started_at=rollout_started_at,
+                        expected_image=new_image,
+                    )
+                    progress['failed_pods'] = failed_pods
+                    progress['message'] = failure_reason
+
+                    # 避免瞬时失败误判：仅当连续多次轮询都失败才判定最终失败
+                    if transient_failed_pod_checks >= max_transient_failure_checks:
+                        logs = await self._get_failed_pods_logs(namespace, deployment_name, failed_pods)
+                        progress['status'] = 'failed'
+                        progress['logs'] = logs
+                        if progress_callback:
+                            await progress_callback(progress)
+                        return {
+                            'success': False,
+                            'message': failure_reason,
+                            'ready_replicas': ready,
+                            'desired_replicas': desired,
+                            'duration': int(elapsed),
+                            'failed_pods': failed_pods,
+                            'logs': logs
+                        }
+                else:
+                    transient_failed_pod_checks = 0
+                
+                # 检查 Deployment conditions
+                conditions = status.conditions or []
+                progressing = next(
+                    (c for c in conditions if c.type == 'Progressing'),
+                    None
+                )
+                
+                if progressing and progressing.reason == 'ProgressDeadlineExceeded':
+                    progress_deadline_exceeded_checks += 1
+                    failure_reason = await self._get_failure_reason(
+                        namespace,
+                        deployment_name,
+                        release_started_at=rollout_started_at,
+                        expected_image=new_image,
+                    )
+                    progress['message'] = failure_reason or 'Progress deadline exceeded'
+
+                    # 避免状态瞬时抖动误判：连续多次命中才判失败
+                    if progress_deadline_exceeded_checks >= max_transient_failure_checks:
+                        logs = await self._get_failed_pods_logs(namespace, deployment_name)
+                        progress['status'] = 'failed'
+                        progress['logs'] = logs
+                        if progress_callback:
+                            await progress_callback(progress)
+                        return {
+                            'success': False,
+                            'message': failure_reason or 'Rolling update failed: progress deadline exceeded',
+                            'ready_replicas': ready,
+                            'desired_replicas': desired,
+                            'duration': int(elapsed),
+                            'logs': logs
+                        }
+                else:
+                    progress_deadline_exceeded_checks = 0
+                
                 # updated == desired 但 ready < desired，Pod 启动慢或有问题
-                if updated == desired and ready < desired and elapsed > 30:
-                    consecutive_failures += 1
+                if updated == desired and ready < desired and elapsed > not_ready_failure_grace_seconds:
+                    if self._has_recent_not_ready_pods(pod_status, not_ready_failure_grace_seconds):
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
                     if consecutive_failures >= max_consecutive_failures:
-                        failure_reason = await self._get_failure_reason(namespace, deployment_name)
+                        failure_reason = await self._get_failure_reason(
+                            namespace,
+                            deployment_name,
+                            release_started_at=rollout_started_at,
+                            expected_image=new_image,
+                        )
                         logs = await self._get_failed_pods_logs(namespace, deployment_name)
                         progress['status'] = 'failed'
                         progress['message'] = failure_reason or f'Pods not ready after {int(elapsed)}s'
@@ -358,6 +413,7 @@ class K8sService:
                             'success': False,
                             'message': failure_reason or f'Rolling update failed: Pods not ready after {int(elapsed)}s',
                             'ready_replicas': ready,
+                            'desired_replicas': desired,
                             'duration': int(elapsed),
                             'logs': logs
                         }
@@ -375,6 +431,56 @@ class K8sService:
                 raise
             
             await asyncio.sleep(check_interval)
+
+    def _calculate_probe_grace_seconds(self, deployment: Any) -> int:
+        """根据 Deployment 的探针参数估算就绪观察窗口（秒）。"""
+        try:
+            containers = deployment.spec.template.spec.containers or []
+        except Exception:
+            return 30
+
+        max_grace = 30
+
+        for c in containers:
+            for probe_name in ("startup_probe", "readiness_probe"):
+                probe = getattr(c, probe_name, None)
+                if not probe:
+                    continue
+
+                initial_delay = getattr(probe, "initial_delay_seconds", 0) or 0
+                period = getattr(probe, "period_seconds", 10) or 10
+                failure_threshold = getattr(probe, "failure_threshold", 3) or 3
+
+                # 给探针至少一个完整失败窗口再判定，避免滚动更新末尾瞬时误判
+                grace = initial_delay + (period * failure_threshold)
+                if grace > max_grace:
+                    max_grace = grace
+
+        return max_grace
+
+    def _has_recent_not_ready_pods(self, pod_status: list, probe_grace_seconds: int) -> bool:
+        """判断是否存在还在探针观察窗口内的未就绪 Pod。"""
+        now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+        for pod in pod_status or []:
+            if pod.get('ready') is True:
+                continue
+            created_at = self._parse_pod_created_at(pod.get('age'))
+            if not created_at:
+                continue
+            if (now_utc - created_at).total_seconds() < probe_grace_seconds:
+                return True
+        return False
+
+    def _parse_pod_created_at(self, value: Optional[str]) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
     
     async def get_deployment_status(
         self,
@@ -570,9 +676,18 @@ class K8sService:
             logger.error(f"Failed to get pods logs: {e}")
             return f"Failed to get logs: {str(e)}"
     
-    async def _get_failure_reason(self, namespace: str, deployment_name: str) -> str:
+    async def _get_failure_reason(
+        self,
+        namespace: str,
+        deployment_name: str,
+        release_started_at: Optional[datetime] = None,
+        expected_image: Optional[str] = None,
+    ) -> str:
         """通过读取 Pod Events 提取失败原因（等价于 kubectl describe pod）"""
         try:
+            if release_started_at and release_started_at.tzinfo is None:
+                release_started_at = release_started_at.replace(tzinfo=timezone.utc)
+
             client_mgr = await self._get_client()
             apps_v1 = client_mgr.apps_v1
             core_v1 = client_mgr.core_v1
@@ -595,6 +710,12 @@ class K8sService:
 
             for pod in pods.items:
                 pod_name = pod.metadata.name
+
+                # 仅分析目标镜像对应 Pod，避免滚动更新过程中旧版本 Pod 噪音干扰
+                if expected_image and pod.spec and pod.spec.containers:
+                    pod_image = pod.spec.containers[0].image
+                    if pod_image != expected_image:
+                        continue
 
                 # 1. 先检查容器状态中的异常信息（waiting.message 通常包含具体错误）
                 container_statuses = pod.status.container_statuses or []
@@ -621,6 +742,14 @@ class K8sService:
                         field_selector=f"involvedObject.name={pod_name}"
                     )
                     for e in events.items:
+                        event_time = e.last_timestamp or e.event_time or e.first_timestamp or e.metadata.creation_timestamp
+                        if release_started_at and event_time:
+                            check_time = event_time
+                            if check_time.tzinfo is None:
+                                check_time = check_time.replace(tzinfo=timezone.utc)
+                            if check_time < release_started_at:
+                                continue
+
                         if e.type == 'Warning':
                             reasons.append(
                                 f"[{pod_name}] {e.reason}: {(e.message or '')[:300]}"

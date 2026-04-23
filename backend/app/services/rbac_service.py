@@ -121,7 +121,8 @@ class RBACService:
     
     async def init_system_roles(self):
         """初始化系统角色和权限"""
-        # 1. 创建系统权限
+        # 1. 创建系统权限（包括通配符权限）
+        all_perm_codes = set()
         for perm_data in self.SYSTEM_PERMISSIONS:
             result = await self.db.execute(
                 select(RBACPermission).where(RBACPermission.code == perm_data["code"])
@@ -129,6 +130,24 @@ class RBACService:
             if not result.scalar_one_or_none():
                 permission = RBACPermission(**perm_data)
                 self.db.add(permission)
+                all_perm_codes.add(perm_data["code"])
+        
+        # 添加通配符权限
+        wildcard_permissions = [
+            {"name": "命名空间全部操作", "code": "namespace:*", "resource_type": "namespace", "action": "*"},
+            {"name": "服务全部操作", "code": "service:*", "resource_type": "service", "action": "*"},
+            {"name": "发布全部操作", "code": "release:*", "resource_type": "release", "action": "*"},
+            {"name": "用户全部操作", "code": "user:*", "resource_type": "user", "action": "*"},
+            {"name": "角色全部操作", "code": "role:*", "resource_type": "role", "action": "*"},
+        ]
+        for perm_data in wildcard_permissions:
+            if perm_data["code"] not in all_perm_codes:
+                result = await self.db.execute(
+                    select(RBACPermission).where(RBACPermission.code == perm_data["code"])
+                )
+                if not result.scalar_one_or_none():
+                    permission = RBACPermission(**perm_data)
+                    self.db.add(permission)
         
         await self.db.commit()
         

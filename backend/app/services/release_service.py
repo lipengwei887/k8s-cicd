@@ -202,7 +202,7 @@ class ReleaseService:
             final_progress = {
                 'status': 'completed' if result['success'] else 'failed',
                 'message': result['message'],
-                'desired': result.get('ready_replicas', 0),
+                'desired': result.get('desired_replicas', result.get('ready_replicas', 0)),
                 'ready': result.get('ready_replicas', 0),
                 'pods': result.get('pod_status', []),
                 'elapsed_seconds': result.get('duration', 0),

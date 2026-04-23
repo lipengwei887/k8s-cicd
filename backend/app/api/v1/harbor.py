@@ -7,6 +7,7 @@ from typing import List, Optional
 import logging
 import requests
 
+from app.core.authorization import require_permission
 from app.api.v1.auth import get_current_active_user
 from app.models.user import User
 from app.services.harbor_service import HarborService, harbor_service
@@ -54,7 +55,7 @@ async def get_service_image_tags(
     service_id: int,
     limit: int = Query(50, ge=1, le=100, description="返回数量限制"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission("service:read"))
 ):
     """
     根据服务 ID 获取该服务对应镜像的标签列表

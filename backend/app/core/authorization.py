@@ -137,7 +137,7 @@ async def ensure_permission(
         )
 
 
-def require_permission(permission_code: str):
+def require_permission(permission_code: str, resource_context: Optional[ResourceContext] = None):
     from fastapi import Depends
     from app.api.v1.auth import get_current_active_user
 
@@ -145,7 +145,7 @@ def require_permission(permission_code: str):
         current_user: User = Depends(get_current_active_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        await ensure_permission(db, current_user, permission_code)
+        await ensure_permission(db, current_user, permission_code, resource_context)
         return current_user
 
     return dependency
