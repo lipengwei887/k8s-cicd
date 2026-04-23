@@ -72,3 +72,6 @@ temp/
 # Kubeconfig (sensitive)
 *.kubeconfig
 kubeconfig.yaml
+
+# Git worktrees
+.worktrees/
