@@ -24,6 +24,19 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def resolve_harbor_host_from_images(images: List[str]) -> Optional[str]:
+    """从镜像列表中推断可用的 Harbor host。"""
+    for image in images:
+        if not image:
+            continue
+
+        harbor_host, _, _ = harbor_service.parse_image_url(image)
+        if harbor_host and (harbor_host == "localhost" or "." in harbor_host or ":" in harbor_host):
+            return harbor_host
+
+    return None
+
+
 @router.get("/tags")
 async def get_image_tags(
     project: str = Query(..., description="Harbor 项目名称"),
@@ -143,8 +156,26 @@ async def get_service_image_tags(
         
         logger.info(f"Parsed result - host: {harbor_host}, project: {project}, repository: {repository}")
         
-        if not harbor_host or not project or not repository:
+        if (not harbor_host) and namespace:
+            fallback_images_result = await db.execute(
+                select(Service.current_image).where(
+                    Service.namespace_id == namespace.id,
+                    Service.current_image.is_not(None),
+                )
+            )
+            fallback_images = [row[0] for row in fallback_images_result.all() if row[0]]
+            harbor_host = resolve_harbor_host_from_images(fallback_images)
+
+            if harbor_host:
+                logger.info(
+                    f"Resolved Harbor host from namespace {namespace.name} services: {harbor_host}"
+                )
+
+        if not project or not repository:
             raise HTTPException(status_code=400, detail=f"Invalid image URL format: {current_image}")
+
+        if not harbor_host:
+            raise HTTPException(status_code=400, detail=f"Cannot resolve Harbor host from image: {current_image}")
         
         # 构建 harbor URL
         harbor_url = f"https://{harbor_host}"

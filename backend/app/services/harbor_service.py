@@ -122,11 +122,24 @@ class HarborService:
             parts = image.split('/')
             
             if len(parts) >= 3:
-                # 格式: harbor.example.com/project/repo
-                harbor_host = parts[0]
-                project = parts[1]
-                repository = '/'.join(parts[2:])  # 支持多级路径
-                return harbor_host, project, repository
+                # 仅当首段看起来像 registry host 时按 host/project/repo 解析。
+                # 例如 test/backend/service 应视为 project/repo，而非 host/project/repo。
+                first_part = parts[0]
+                looks_like_host = (
+                    first_part == 'localhost'
+                    or '.' in first_part
+                    or ':' in first_part
+                )
+
+                if looks_like_host:
+                    # 格式: harbor.example.com/project/repo
+                    harbor_host = first_part
+                    project = parts[1]
+                    repository = '/'.join(parts[2:])  # 支持多级路径
+                    return harbor_host, project, repository
+
+                # 格式: project/repo/path
+                return None, first_part, '/'.join(parts[1:])
             elif len(parts) == 2:
                 # 格式: project/repo (没有 host，使用默认)
                 return None, parts[0], parts[1]

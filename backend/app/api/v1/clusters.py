@@ -18,6 +18,24 @@ from app.services.k8s_sync_service import K8sSyncService
 router = APIRouter()
 
 
+def build_service_model(namespace_id: int, workload_info: dict) -> Service:
+    return Service(
+        namespace_id=namespace_id,
+        name=workload_info["name"],
+        display_name=workload_info["display_name"],
+        type=workload_info["type"],
+        deploy_name=workload_info["deploy_name"],
+        container_name=workload_info["container_name"],
+        harbor_project=workload_info.get("harbor_project"),
+        harbor_repo=workload_info.get("harbor_repo"),
+        current_image=workload_info.get("current_image"),
+        port=workload_info.get("port"),
+        replicas=workload_info["replicas"],
+        status=1,
+        description=workload_info["description"],
+    )
+
+
 @router.get("", response_model=ClusterListResponse)
 async def list_clusters(
     skip: int = 0,
@@ -230,20 +248,7 @@ async def sync_cluster(
                         existing_svc.harbor_repo = deploy_info.get('harbor_repo')
                     else:
                         # 创建新服务
-                        new_svc = Service(
-                            namespace_id=namespace_id,
-                            name=deploy_info['name'],
-                            display_name=deploy_info['display_name'],
-                            type=deploy_info['type'],
-                            deploy_name=deploy_info['deploy_name'],
-                            container_name=deploy_info['container_name'],
-                            harbor_project=deploy_info.get('harbor_project'),
-                            harbor_repo=deploy_info.get('harbor_repo'),
-                            port=deploy_info.get('port'),
-                            replicas=deploy_info['replicas'],
-                            status=1,
-                            description=deploy_info['description']
-                        )
+                        new_svc = build_service_model(namespace_id, deploy_info)
                         db.add(new_svc)
                         synced_services.append(f"{ns_info['name']}/{deploy_info['name']}")
             except Exception as e:
@@ -268,21 +273,7 @@ async def sync_cluster(
                         existing_svc.harbor_project = sts_info.get('harbor_project')
                         existing_svc.harbor_repo = sts_info.get('harbor_repo')
                     else:
-                        new_svc = Service(
-                            namespace_id=namespace_id,
-                            name=sts_info['name'],
-                            display_name=sts_info['display_name'],
-                            type=sts_info['type'],
-                            deploy_name=sts_info['deploy_name'],
-                            container_name=sts_info['container_name'],
-                            harbor_project=sts_info.get('harbor_project'),
-                            harbor_repo=sts_info.get('harbor_repo'),
-                            current_image=sts_info.get('current_image'),
-                            port=sts_info.get('port'),
-                            replicas=sts_info['replicas'],
-                            status=1,
-                            description=sts_info['description']
-                        )
+                        new_svc = build_service_model(namespace_id, sts_info)
                         db.add(new_svc)
                         synced_services.append(f"{ns_info['name']}/{sts_info['name']}")
             except Exception as e:
@@ -425,21 +416,7 @@ async def upload_kubeconfig(
                         existing_svc.harbor_repo = deploy_info.get('harbor_repo')
                     else:
                         # 创建新服务
-                        new_svc = Service(
-                            namespace_id=namespace_id,
-                            name=deploy_info['name'],
-                            display_name=deploy_info['display_name'],
-                            type=deploy_info['type'],
-                            deploy_name=deploy_info['deploy_name'],
-                            container_name=deploy_info['container_name'],
-                            harbor_project=deploy_info.get('harbor_project'),
-                            harbor_repo=deploy_info.get('harbor_repo'),
-                            current_image=deploy_info.get('current_image'),
-                            port=deploy_info.get('port'),
-                            replicas=deploy_info['replicas'],
-                            status=1,
-                            description=deploy_info['description']
-                        )
+                        new_svc = build_service_model(namespace_id, deploy_info)
                         db.add(new_svc)
             except Exception as e:
                 logger.warning(f"Failed to sync deployments: {e}")
@@ -466,21 +443,7 @@ async def upload_kubeconfig(
                         existing_svc.harbor_repo = sts_info.get('harbor_repo')
                     else:
                         # 创建新服务
-                        new_svc = Service(
-                            namespace_id=namespace_id,
-                            name=sts_info['name'],
-                            display_name=sts_info['display_name'],
-                            type=sts_info['type'],
-                            deploy_name=sts_info['deploy_name'],
-                            current_image=sts_info.get('current_image'),
-                            container_name=sts_info['container_name'],
-                            harbor_project=sts_info.get('harbor_project'),
-                            harbor_repo=sts_info.get('harbor_repo'),
-                            port=sts_info.get('port'),
-                            replicas=sts_info['replicas'],
-                            status=1,
-                            description=sts_info['description']
-                        )
+                        new_svc = build_service_model(namespace_id, sts_info)
                         db.add(new_svc)
             except Exception as e:
                 logger.warning(f"Failed to sync statefulsets: {e}")
