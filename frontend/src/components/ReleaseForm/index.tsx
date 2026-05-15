@@ -150,7 +150,7 @@ const ReleaseForm: React.FC = () => {
   }
 
   // 创建发布单（支持批量创建，每个服务独立镜像版本）
-  const handleCreateRelease = async (values: any) => {
+  const handleCreateRelease = async () => {
     setLoading(true)
     try {
       // 从 form 获取所有字段值（包括之前步骤的字段）
@@ -185,8 +185,8 @@ const ReleaseForm: React.FC = () => {
         const res: any = await releaseApi.createRelease({
           service_id: serviceId,
           image_tag: imageTag,
-          require_approval: values.require_approval,
-          validity_period: values.validity_period || 0,
+          require_approval: allValues.require_approval,
+          validity_period: allValues.validity_period || 0,
         })
         releaseIds.push(res.id)
       }
@@ -506,25 +506,24 @@ const ReleaseForm: React.FC = () => {
         form={form}
         layout="vertical"
         preserve={true}
-        onFinish={currentStep === 2 ? handleCreateRelease : undefined}
       >
         {steps[currentStep].content}
 
         <Form.Item style={{ marginTop: 24 }}>
           {currentStep > 0 && (
-            <Button style={{ marginRight: 8 }} onClick={prevStep}>
+            <Button htmlType="button" style={{ marginRight: 8 }} onClick={prevStep}>
               上一步
             </Button>
           )}
 
           {currentStep < steps.length - 1 && currentStep < 2 && (
-            <Button type="primary" onClick={nextStep}>
+            <Button htmlType="button" type="primary" onClick={nextStep}>
               下一步
             </Button>
           )}
 
           {currentStep === 2 && (
-            <Button type="primary" htmlType="submit" loading={loading}>
+            <Button htmlType="button" type="primary" loading={loading} onClick={handleCreateRelease}>
               确认发布
             </Button>
           )}
@@ -532,12 +531,12 @@ const ReleaseForm: React.FC = () => {
           {currentStep === 3 && (
             <>
               {releaseStatus === 'success' && (
-                <Button type="primary" onClick={() => navigate('/dashboard')}>
+                <Button htmlType="button" type="primary" onClick={() => navigate('/dashboard')}>
                   返回首页
                 </Button>
               )}
               {releaseStatus !== 'success' && (
-                <Button onClick={() => navigate('/dashboard')}>
+                <Button htmlType="button" onClick={() => navigate('/dashboard')}>
                   返回
                 </Button>
               )}
